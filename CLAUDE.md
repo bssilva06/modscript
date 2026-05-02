@@ -167,19 +167,24 @@ The scaffold's `devvit.json` does not yet have a `permissions` block or the `set
 "permissions": {
   "reddit": true,
   "redis": true,
-  "http": ["generativelanguage.googleapis.com"]
+  "http": {
+    "enable": true,
+    "domains": ["generativelanguage.googleapis.com"]
+  }
 },
 "settings": {
   "global": {
     "geminiApiKey":    { "type": "string", "isSecret": true, "label": "Google Gemini API Key" },
-    "paused":          { "type": "boolean", "label": "Pause all AI calls", "default": false },
-    "quotaGenerate":   { "type": "number", "label": "Generate calls/day/sub", "default": 50 },
-    "quotaExplain":    { "type": "number", "label": "Explain calls/day/sub",  "default": 50 },
-    "quotaConflict":   { "type": "number", "label": "Conflict calls/day/sub", "default": 5 },
-    "maxInputTokens":  { "type": "number", "label": "Max input tokens per call", "default": 50000 }
+    "paused":          { "type": "boolean", "label": "Pause all AI calls", "defaultValue": false },
+    "quotaGenerate":   { "type": "number", "label": "Generate calls/day/sub", "defaultValue": 50 },
+    "quotaExplain":    { "type": "number", "label": "Explain calls/day/sub",  "defaultValue": 50 },
+    "quotaConflict":   { "type": "number", "label": "Conflict calls/day/sub", "defaultValue": 5 },
+    "maxInputTokens":  { "type": "number", "label": "Max input tokens per call", "defaultValue": 50000 }
   }
 }
 ```
+
+> Schema gotchas (v1): `permissions.http` is an **object** with `enable` + `domains`, not a bare array. Setting fields use `defaultValue` (not `default`); `additionalProperties: false` rejects extras silently with a oneOf-mismatch error. Secret string settings (`isSecret: true`) must NOT include `defaultValue`.
 
 The Gemini key is set out-of-band: `npx devvit settings set geminiApiKey`. It is never edited via UI.
 

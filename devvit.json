@@ -4,7 +4,12 @@
   "permissions": {
     "reddit": true,
     "redis": true,
-    "http": ["generativelanguage.googleapis.com"]
+    "http": {
+      "enable": true,
+      "domains": [
+        "generativelanguage.googleapis.com"
+      ]
+    }
   },
   "settings": {
     "global": {
@@ -16,27 +21,27 @@
       "paused": {
         "type": "boolean",
         "label": "Pause all AI calls",
-        "default": false
+        "defaultValue": false
       },
       "quotaGenerate": {
         "type": "number",
         "label": "Generate calls/day/sub",
-        "default": 50
+        "defaultValue": 50
       },
       "quotaExplain": {
         "type": "number",
         "label": "Explain calls/day/sub",
-        "default": 50
+        "defaultValue": 50
       },
       "quotaConflict": {
         "type": "number",
         "label": "Conflict calls/day/sub",
-        "default": 5
+        "defaultValue": 5
       },
       "maxInputTokens": {
         "type": "number",
         "label": "Max input tokens per call",
-        "default": 50000
+        "defaultValue": 50000
       }
     }
   },
@@ -74,5 +79,8 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"
+  },
+  "dev": {
+    "subreddit": "modscript06_dev"
   }
 }
