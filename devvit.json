@@ -1,0 +1,78 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "modscript06",
+  "permissions": {
+    "reddit": true,
+    "redis": true,
+    "http": ["generativelanguage.googleapis.com"]
+  },
+  "settings": {
+    "global": {
+      "geminiApiKey": {
+        "type": "string",
+        "isSecret": true,
+        "label": "Google Gemini API Key"
+      },
+      "paused": {
+        "type": "boolean",
+        "label": "Pause all AI calls",
+        "default": false
+      },
+      "quotaGenerate": {
+        "type": "number",
+        "label": "Generate calls/day/sub",
+        "default": 50
+      },
+      "quotaExplain": {
+        "type": "number",
+        "label": "Explain calls/day/sub",
+        "default": 50
+      },
+      "quotaConflict": {
+        "type": "number",
+        "label": "Conflict calls/day/sub",
+        "default": 5
+      },
+      "maxInputTokens": {
+        "type": "number",
+        "label": "Max input tokens per call",
+        "default": 50000
+      }
+    }
+  },
+  "post": {
+    "dir": "dist/client",
+    "entrypoints": {
+      "default": {
+        "inline": true,
+        "entry": "splash.html"
+      },
+      "game": {
+        "entry": "game.html"
+      }
+    }
+  },
+  "server": {
+    "dir": "dist/server",
+    "entry": "index.cjs"
+  },
+  "menu": {
+    "items": [
+      {
+        "label": "ModScript",
+        "description": "Generate, explain, and audit your AutoModerator config with AI",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/menu/post-create"
+      }
+    ]
+  },
+  "forms": {},
+  "triggers": {
+    "onAppInstall": "/internal/triggers/on-app-install"
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build"
+  }
+}
