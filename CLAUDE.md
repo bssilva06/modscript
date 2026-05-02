@@ -2,25 +2,29 @@
 
 Project guidance for Claude when working in this repo. Read this before making changes.
 
-> Companion docs: `AGENTS.md` (workspace rules) and `modscript-prd.md` (product spec, v1.2). When this file conflicts with `AGENTS.md`, follow `AGENTS.md` for tooling/style rules and this file for product behavior.
+> Companion docs: `AGENTS.md` (workspace rules) and `modscript-prd.md` (product spec, v1.5). When this file conflicts with `AGENTS.md`, follow `AGENTS.md` for tooling/style rules and this file for product behavior.
 
 ---
 
 ## 1. What we're building
 
-**ModScript** is a Devvit Web mod tool that lives inside Reddit's native mod panel. It gives subreddit moderators a conversational AI interface (powered by Claude) to **Generate**, **Explain**, and **Audit** their AutoModerator YAML configuration without writing YAML or leaving Reddit.
+**ModScript** is a Devvit Web mod tool that lives inside Reddit's native mod panel. It gives subreddit moderators a conversational AI interface (powered by Gemini) to **Generate**, **Explain**, and **Audit** their AutoModerator YAML configuration without writing YAML or leaving Reddit.
 
 Hackathon: Reddit Mod Tools & Migrated Apps Hackathon (Apr 29 – May 27, 2026). Category: **New Mod Tool**.
+
+> **AI provider note.** Reddit's Devvit policy currently approves only Google Gemini and OpenAI/ChatGPT for hosted apps. ModScript uses **Google Gemini** (`generativelanguage.googleapis.com`). An earlier draft of this PRD targeted Anthropic Claude; that pivot happened before any deploy and is reflected throughout this file.
 
 ### Three core modes
 
 | Mode | Purpose | Model |
 |---|---|---|
-| Generate | Plain English → valid AutoMod YAML, append-only by default | `claude-sonnet-4-6` |
-| Explain | YAML → rule-by-rule plain English breakdown | `claude-haiku-4-5-20251001` |
-| Conflict Check | Pattern-based audit: duplicates, redundant rules, suspicious ordering | `claude-opus-4-7` |
+| Generate | Plain English → valid AutoMod YAML, append-only by default | `gemini-2.5-pro` |
+| Explain | YAML → rule-by-rule plain English breakdown | `gemini-2.5-flash` |
+| Conflict Check | Pattern-based audit: duplicates, redundant rules, suspicious ordering | `gemini-2.5-pro` |
 
 Conflict Check is **structural pattern analysis**, not runtime simulation. UI copy must reflect this — output is framed as "review suggestions," never "rules that will fire."
+
+> Gemini's family has two tiers (Pro and Flash) where the previous Claude design used three (Sonnet/Haiku/Opus). Generate and Conflict Check share `gemini-2.5-pro`; the cost gradient between them is enforced by F11 daily quotas (50 vs 5 calls/sub/day), not by model selection.
 
 ---
 
@@ -32,7 +36,7 @@ This project is **Devvit Web**, not Devvit Blocks. The PRD's file layout referen
 - **Backend**: Node 22 serverless (Devvit), Hono router
 - **Server access**: `redis`, `reddit`, `context` from `@devvit/web/server`
 - **Client access**: `navigateTo`, `showToast`, `showForm` from `@devvit/web/client`
-- **External**: Anthropic API via `fetch()` from the server
+- **External**: Google Gemini API via `fetch()` from the server
 
 ### Directory layout
 
@@ -50,7 +54,7 @@ src/
 │   │   ├── menu.ts       # Menu item handlers (subreddit mod tools)
 │   │   ├── forms.ts      # Form submit handlers
 │   │   └── triggers.ts   # App lifecycle triggers (onAppInstall, etc.)
-│   └── core/        # Domain logic — claude.ts, wiki.ts, redis.ts, templates.ts go here
+│   └── core/        # Domain logic — gemini.ts, wiki.ts, redis.ts, templates.ts go here
 └── shared/          # Types shared between client and server
 ```
 
@@ -75,8 +79,8 @@ The default "Create a new post" / "Example form" menu items from the template ca
 | ID | Feature | Key behaviors |
 |---|---|---|
 | F1 | Generate Mode | Append-only by default. Explicit "Rewrite full config" requires confirm + auto-backup. |
-| F2 | Explain Mode | Rule-by-rule plain English; uses Haiku. |
-| F3 | Conflict Check | Pattern heuristics only, not simulation. Uses Opus. UI copy: "review suggestions." |
+| F2 | Explain Mode | Rule-by-rule plain English; uses Gemini 2.5 Flash. |
+| F3 | Conflict Check | Pattern heuristics only, not simulation. Uses Gemini 2.5 Pro, gated by a tight daily quota. UI copy: "review suggestions." |
 | F4 | Wiki Read/Write | Auto-fetch `config/automoderator` on open. Diff preview before every save. `update(content, reason)` with `runAs: USER`. Redis backup before every write. Native wiki revisions are the canonical history. |
 | F5 | Privacy Disclosure | One-time modal on first launch per subreddit; ack stored in Redis. |
 | F6 | Starter Templates | 4 templates: General, Gaming, Support/Mental Health, News + "Start blank." |
@@ -99,19 +103,19 @@ These came out of the PRD's risk analysis. Treat them as invariants.
 2. **Rewrite requires a second click.** The "Rewrite full config" path needs an explicit confirmation dialog and triggers a Redis backup *before* writing.
 3. **Every wiki save shows a diff preview first.** Additions in green, removals in red. No save without confirmation.
 4. **Every wiki save snapshots the previous config to Redis** *and* writes a meaningful `reason` string into Reddit's native wiki revision history.
-5. **Privacy disclosure on first launch.** Mod must acknowledge before any Claude call. Ack stored in Redis keyed by subreddit.
+5. **Privacy disclosure on first launch.** Mod must acknowledge before any Gemini call. Ack stored in Redis keyed by subreddit.
 6. **Conflict Analyzer copy is scoped.** Never claim it predicts which rules fire at runtime. It flags structural patterns for human review.
-7. **API key is a developer global secret (Model A).** It lives in `devvit.json` `settings.global.anthropicApiKey` with `isSecret: true`, set via `npx devvit settings set anthropicApiKey`. Read with `settings.get('anthropicApiKey')` on the server only. Never expose it to the client, never hardcode it, never log it. Mods do **not** enter their own key in this build — see PRD §7.3.
-8. **Cost controls are non-negotiable.** Every Anthropic call is gated by F11: kill-switch check, daily quota check, max-input-token check, then usage log on success. Bypassing any of these is a bug, not a shortcut.
-9. **Generated YAML is not validated against AutoMod.** Claude self-validates via prompt; UI copy advises mods to test on a low-traffic post before relying on a new rule.
+7. **API key is a developer global secret (Model A).** It lives in `devvit.json` `settings.global.geminiApiKey` with `isSecret: true`, set via `npx devvit settings set geminiApiKey`. Read with `settings.get('geminiApiKey')` on the server only. Never expose it to the client, never hardcode it, never log it. Mods do **not** enter their own key in this build — see PRD §7.3.
+8. **Cost controls are non-negotiable.** Every Gemini call is gated by F11: kill-switch check, daily quota check, max-input-token check, then usage log on success. Bypassing any of these is a bug, not a shortcut.
+9. **Generated YAML is not validated against AutoMod.** Gemini self-validates via prompt; UI copy advises mods to test on a low-traffic post before relying on a new rule.
 10. **Server handlers must complete in 30 seconds.** No streaming, no long-running tasks. Conflict Check on huge configs must be chunked or pre-summarized.
 
 ---
 
-## 6. Claude integration
+## 6. Gemini integration
 
-- **Where it runs:** server-side only, in `src/server/core/claude.ts`. Client never calls Anthropic directly (the iframe is network-locked to the app's own domain).
-- **Auth:** `await settings.get('anthropicApiKey')` from `@devvit/web/server`. The value is a Devvit global secret set via CLI (`npx devvit settings set anthropicApiKey`).
+- **Where it runs:** server-side only, in `src/server/core/gemini.ts`. Client never calls Google directly (the iframe is network-locked to the app's own domain).
+- **Auth:** `await settings.get('geminiApiKey')` from `@devvit/web/server`. The value is a Devvit global secret set via CLI (`npx devvit settings set geminiApiKey`). Pass it as the `x-goog-api-key` header on each request.
 - **System prompt** includes:
   - The full AutoMod YAML spec and supported fields
   - The subreddit's current config (fetched on load)
@@ -120,9 +124,9 @@ These came out of the PRD's risk analysis. Treat them as invariants.
   - Output format rules (raw YAML for Generate; structured text for Explain/Conflict)
   - The append-only invariant
 - **Conversation history** is stored in Redis per-subreddit and replayed into each call to support multi-turn refinement.
-- **Model selection** is per-mode (see table in §1). Don't use one model for everything — Haiku for Explain keeps cost down for the most-used path; Opus is reserved for the reasoning-heavy Conflict Check.
-- **`api.anthropic.com` must be allow-listed** in `devvit.json` `permissions.http`. It is **not** in Devvit's globally pre-approved list, so the first upload triggers Reddit admin review. Submit on Week 1 day one.
-- **30-second timeout** applies to the entire handler, including the Anthropic round trip. No streaming UIs.
+- **Model selection** is per-mode (see table in §1). Don't use one model for everything — Flash for Explain keeps cost down for the most-used path. Generate and Conflict Check both use Pro; the F11 quota differential (50 vs 5 calls/sub/day) is what bounds cost on the reasoning-heavy Conflict Check, since Gemini's tier family doesn't have an Opus-equivalent third rung.
+- **`generativelanguage.googleapis.com` must be allow-listed** in `devvit.json` `permissions.http`. Reddit's Devvit allow-list has **no global pre-approval** — every app must request its own domains, even for `devvit playtest`. Approval is reviewed manually (historically Tuesdays, 2+ weeks SLA). Submit on Week 1 day one. Status surfaces on `developers.reddit.com/my/apps`.
+- **30-second timeout** applies to the entire handler, including the Gemini round trip. No streaming UIs.
 
 ---
 
@@ -138,37 +142,37 @@ These came out of the PRD's risk analysis. Treat them as invariants.
 
 ## 8. Cost controls (F11) — non-negotiable
 
-Every Anthropic call must pass through this gate, in this order:
+Every Gemini call must pass through this gate, in this order:
 
 1. **Kill switch.** `await settings.get('paused')` — if true, return a friendly "temporarily unavailable" toast and abort.
 2. **Daily quota.** `INCR quota:<subreddit>:<mode>:<YYYYMMDD>` with a 48-hour `EXPIRE`. If the result exceeds the per-mode cap, return a friendly "daily limit reached" toast and abort.
-3. **Max input size.** Reject configs above ~50K tokens with a clear error before building the prompt. Do not call Anthropic.
-4. **Usage log.** On success, write input/output token counts and approximate cost to `usage:<subreddit>:<YYYYMMDD>`.
+3. **Max input size.** Reject configs above ~50K tokens with a clear error before building the prompt. Do not call Gemini.
+4. **Usage log.** On success, write input/output token counts (from Gemini's `usageMetadata`) and approximate cost to `usage:<subreddit>:<YYYYMMDD>`.
 
 Defaults (read from global settings, tunable without redeploy):
 
-- Generate (Sonnet): 50/day/sub
-- Explain (Haiku): 50/day/sub
-- Conflict Check (Opus): 5/day/sub
+- Generate (Pro): 50/day/sub
+- Explain (Flash): 50/day/sub
+- Conflict Check (Pro): 5/day/sub
 
-Implementation lives in `src/server/core/quota.ts` (new). Every mode handler in `src/server/routes/api.ts` calls it before invoking `claude.ts`. There is no per-subreddit override — quotas are global-tunable only.
+Implementation lives in `src/server/core/quota.ts` (new). Every mode handler in `src/server/routes/api.ts` calls it before invoking `gemini.ts`. There is no per-subreddit override — quotas are global-tunable only.
 
 ---
 
 ## 9. Required `devvit.json` additions
 
-The scaffold's `devvit.json` does not yet have a `permissions` block or the `settings` block. Both must be added before any Anthropic call works:
+The scaffold's `devvit.json` does not yet have a `permissions` block or the `settings` block. Both must be added before any Gemini call works:
 
 ```json
 "permissions": {
   "reddit": true,
   "redis": true,
-  "http": ["api.anthropic.com"]
+  "http": ["generativelanguage.googleapis.com"]
 },
 "settings": {
   "global": {
-    "anthropicApiKey": { "type": "string", "isSecret": true, "label": "Anthropic API Key" },
-    "paused":          { "type": "boolean", "label": "Pause all Claude calls", "default": false },
+    "geminiApiKey":    { "type": "string", "isSecret": true, "label": "Google Gemini API Key" },
+    "paused":          { "type": "boolean", "label": "Pause all AI calls", "default": false },
     "quotaGenerate":   { "type": "number", "label": "Generate calls/day/sub", "default": 50 },
     "quotaExplain":    { "type": "number", "label": "Explain calls/day/sub",  "default": 50 },
     "quotaConflict":   { "type": "number", "label": "Conflict calls/day/sub", "default": 5 },
@@ -177,7 +181,7 @@ The scaffold's `devvit.json` does not yet have a `permissions` block or the `set
 }
 ```
 
-The Anthropic key is set out-of-band: `npx devvit settings set anthropicApiKey`. It is never edited via UI.
+The Gemini key is set out-of-band: `npx devvit settings set geminiApiKey`. It is never edited via UI.
 
 ---
 
@@ -242,7 +246,7 @@ After substantive edits, run `npm run type-check` and `npm run lint`. Fix any er
 - [ ] Append-only is enforced; rewrite requires explicit confirmation
 - [ ] F11 cost controls live: quota gate, kill switch, max-input-token cap, usage logging
 - [ ] App is installable from the App Directory in one click (zero setup — Model A)
-- [ ] `api.anthropic.com` admin review approved
+- [ ] `generativelanguage.googleapis.com` admin review approved
 - [ ] **README includes "Fetch Domains" section** listing every external domain and why
 - [ ] **Privacy Policy URL and Terms of Service URL** published and linked in app details
 - [ ] Demo video (<3 min) follows the shot list in PRD §8.1
