@@ -11,10 +11,13 @@ import type {
   ConflictResponse,
   SaveRequest,
   SaveResponse,
+  RevisionsResponse,
+  RevertRequest,
+  RevertResponse,
   ErrorResponse,
 } from '../../shared/api';
 import { checkQuota, logUsage } from '../core/quota';
-import { getCurrent, saveAppend, saveReplace } from '../core/wiki';
+import { getCurrent, saveAppend, saveReplace, getRevisions, revertTo } from '../core/wiki';
 import { generateRule, explainConfig, conflictCheck, estimateTokens } from '../core/gemini';
 import { getTemplate } from '../core/templates';
 
@@ -151,6 +154,35 @@ api.post('/save', async (c) => {
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return c.json<ErrorResponse>({ status: 'error', message: `Save failed: ${msg}` }, 500);
+  }
+});
+
+api.get('/revisions', async (c) => {
+  const { subredditName } = context;
+  if (!subredditName) {
+    return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
+  }
+  try {
+    const revisions = await getRevisions(subredditName);
+    return c.json<RevisionsResponse>({ type: 'revisions', revisions });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return c.json<ErrorResponse>({ status: 'error', message: `Revisions failed: ${msg}` }, 500);
+  }
+});
+
+api.post('/revert', async (c) => {
+  const { subredditName } = context;
+  if (!subredditName) {
+    return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
+  }
+  const body = await c.req.json<RevertRequest>();
+  try {
+    const content = await revertTo(subredditName, body.revisionId);
+    return c.json<RevertResponse>({ type: 'revert', success: true, content });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    return c.json<ErrorResponse>({ status: 'error', message: `Revert failed: ${msg}` }, 500);
   }
 });
 

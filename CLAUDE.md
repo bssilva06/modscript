@@ -84,12 +84,12 @@ The default "Create a new post" / "Example form" menu items from the template ca
 | F4 | Wiki Read/Write | Auto-fetch `config/automoderator` on open. Diff preview before every save. `update(content, reason)` with `runAs: USER`. Redis backup before every write. Native wiki revisions are the canonical history. |
 | F5 | Privacy Disclosure | One-time modal on first launch per subreddit; ack stored in Redis. |
 | F6 | Starter Templates | 4 templates: General, Gaming, Support/Mental Health, News + "Start blank." |
+| F8 | Version History | Revision list modal (last 10 native wiki revisions); one-click revert with Redis backup before reverting. `GET /api/revisions`, `POST /api/revert`. |
 | F11 | Cost Controls | Per-mode-per-sub daily quotas in Redis, global `paused` kill switch, max-input-token cap, server-side usage logging. Load-bearing for Model A billing. |
 
 ### Stretch (only if time)
 
 - F7 Extended template library (Finance, NSFW, Meme, AMA, Sports)
-- F8 Version history UI built on `wikiPage.getRevisions()` / `revertTo()`; Redis backups stay as fast-restore cache
 - F9 Rule Tester sandbox
 - F10 Shareable rule snippets
 
@@ -236,7 +236,6 @@ After substantive edits, run `npm run type-check` and `npm run lint`. Fix any er
 - Analytics dashboard
 - Cross-subreddit rule syncing
 - Rule Tester / Sandbox (stretch only)
-- Version history UI (the *backup logic* is MVP; the *browser* is stretch)
 - Templates beyond the 4 MVP types
 
 ---
@@ -256,3 +255,4 @@ After substantive edits, run `npm run type-check` and `npm run lint`. Fix any er
 - [ ] **Privacy Policy URL and Terms of Service URL** published and linked in app details
 - [ ] Demo video (<3 min) follows the shot list in PRD §8.1
 - [ ] App Directory verified at `developers.reddit.com/apps` for differentiator claim
+- [x] Version history UI (F8): revision list + one-click revert

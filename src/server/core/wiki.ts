@@ -1,4 +1,5 @@
 import { redis, reddit } from '@devvit/web/server';
+import type { WikiRevision } from '../../shared/api';
 
 const WIKI_PAGE = 'config/automoderator';
 const MAX_BACKUPS = 5;
@@ -47,7 +48,7 @@ export async function saveAppend(
 
   const separator = current.trimEnd().length > 0 ? '\n' : '';
   const combined = current.trimEnd() + separator + newYaml;
-  const reason = `ModScript — appended rule: ${summary}`;
+  const reason = `ModScript - appended rule: ${summary}`;
 
   await reddit.updateWikiPage({ subredditName, page: WIKI_PAGE, content: combined, reason });
 }
@@ -60,6 +61,33 @@ export async function saveReplace(
   const current = await getCurrent(subredditName);
   await backupCurrent(subredditName, current);
 
-  const reason = `ModScript — replaced full config: ${summary}`;
+  const reason = `ModScript - replaced full config: ${summary}`;
   await reddit.updateWikiPage({ subredditName, page: WIKI_PAGE, content: newYaml, reason });
+}
+
+export async function getRevisions(subredditName: string): Promise<WikiRevision[]> {
+  try {
+    const page = await reddit.getWikiPage(subredditName, WIKI_PAGE);
+    const listing = await page.getRevisions({ limit: 10 });
+    const revisions: WikiRevision[] = [];
+    for await (const rev of listing) {
+      revisions.push({
+        id: rev.id,
+        timestamp: rev.date.getTime(),
+        author: rev.author.username,
+        reason: rev.reason ?? '',
+      });
+      if (revisions.length >= 10) break;
+    }
+    return revisions;
+  } catch {
+    return [];
+  }
+}
+
+export async function revertTo(subredditName: string, revisionId: string): Promise<string> {
+  const current = await getCurrent(subredditName);
+  await backupCurrent(subredditName, current);
+  await reddit.revertWikiPage(subredditName, WIKI_PAGE, revisionId);
+  return await getCurrent(subredditName);
 }

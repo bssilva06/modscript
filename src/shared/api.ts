@@ -68,3 +68,25 @@ export type ErrorResponse = {
   status: 'error';
   message: string;
 };
+
+export type WikiRevision = {
+  id: string;
+  timestamp: number;
+  author: string;
+  reason: string;
+};
+
+export type RevisionsResponse = {
+  type: 'revisions';
+  revisions: WikiRevision[];
+};
+
+export type RevertRequest = {
+  revisionId: string;
+};
+
+export type RevertResponse = {
+  type: 'revert';
+  success: boolean;
+  content: string;
+};

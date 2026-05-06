@@ -13,6 +13,10 @@ import type {
   ConflictResponse,
   ErrorResponse,
   TemplateName,
+  WikiRevision,
+  RevisionsResponse,
+  RevertRequest,
+  RevertResponse,
 } from '../shared/api';
 
 // --- Types ---
@@ -267,6 +271,73 @@ function RewriteConfirmModal({
   );
 }
 
+function VersionHistoryModal({
+  flow,
+  onRevert,
+  onClose,
+}: {
+  flow: { step: 'loading' } | { step: 'view'; revisions: WikiRevision[] } | { step: 'reverting'; revisionId: string };
+  onRevert: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full p-6 flex flex-col gap-4 max-h-[80vh]">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white">Version History</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+        </div>
+
+        {flow.step === 'loading' && (
+          <div className="flex items-center justify-center py-8 text-gray-400 text-sm animate-pulse">
+            Loading revisions…
+          </div>
+        )}
+
+        {(flow.step === 'view' || flow.step === 'reverting') && (
+          <>
+            {flow.step === 'view' && flow.revisions.length === 0 && (
+              <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                No revisions found. Save your config to create the first one.
+              </p>
+            )}
+            <div className="overflow-y-auto flex-1 flex flex-col gap-2">
+              {(flow.step === 'view' ? flow.revisions : []).map((rev) => {
+                const isReverting = flow.step === 'reverting' && flow.revisionId === rev.id;
+                return (
+                  <div
+                    key={rev.id}
+                    className="flex items-start justify-between gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700"
+                  >
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                        {new Date(rev.timestamp).toLocaleString()}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">by u/{rev.author}</span>
+                      {rev.reason && (
+                        <span className="text-xs text-gray-400 dark:text-gray-500 truncate" title={rev.reason}>
+                          {rev.reason.length > 60 ? rev.reason.slice(0, 60) + '…' : rev.reason}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => onRevert(rev.id)}
+                      disabled={flow.step === 'reverting'}
+                      className="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-500 text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors disabled:opacity-40"
+                    >
+                      {isReverting ? 'Reverting…' : 'Revert'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- Mode badge colours ---
 
 const modeBadge: Record<AppMode, string> = {
@@ -307,7 +378,13 @@ function MainApp({
     | { step: 'rewrite-confirm' }
     | { step: 'diff-preview'; appendMode: boolean; contentToSave: string; saving: boolean };
 
+  type HistoryFlow =
+    | { step: 'loading' }
+    | { step: 'view'; revisions: WikiRevision[] }
+    | { step: 'reverting'; revisionId: string };
+
   const [saveFlow, setSaveFlow] = useState<SaveFlow>(null);
+  const [historyFlow, setHistoryFlow] = useState<HistoryFlow | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -437,6 +514,37 @@ function MainApp({
     }
   };
 
+  const openHistory = async () => {
+    setHistoryFlow({ step: 'loading' });
+    const res = await fetch('/api/revisions');
+    if (!res.ok) {
+      showToast({ text: 'Failed to load history', appearance: 'neutral' });
+      setHistoryFlow(null);
+      return;
+    }
+    const data = await res.json() as RevisionsResponse;
+    setHistoryFlow({ step: 'view', revisions: data.revisions });
+  };
+
+  const handleRevert = async (revisionId: string) => {
+    setHistoryFlow({ step: 'reverting', revisionId });
+    const res = await fetch('/api/revert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ revisionId } satisfies RevertRequest),
+    });
+    if (!res.ok) {
+      showToast({ text: 'Revert failed', appearance: 'neutral' });
+      setHistoryFlow(null);
+      return;
+    }
+    const data = await res.json() as RevertResponse;
+    setWorkingConfig(data.content);
+    setSavedConfig(data.content);
+    setHistoryFlow(null);
+    showToast({ text: 'Reverted successfully', appearance: 'success' });
+  };
+
   const hasUnsavedChanges = workingConfig !== savedConfig;
 
   const placeholder: Record<AppMode, string> = {
@@ -557,6 +665,12 @@ function MainApp({
           </div>
           <div className="flex gap-2">
             <button
+              onClick={() => void openHistory()}
+              className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              History
+            </button>
+            <button
               onClick={handleReplaceClick}
               className="text-xs px-2 py-1 rounded border border-red-300 text-red-600 dark:border-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
             >
@@ -607,6 +721,13 @@ function MainApp({
           onConfirm={() => void confirmSave()}
           onCancel={() => setSaveFlow(null)}
           saving={saveFlow.saving}
+        />
+      )}
+      {historyFlow !== null && (
+        <VersionHistoryModal
+          flow={historyFlow}
+          onRevert={(id) => void handleRevert(id)}
+          onClose={() => setHistoryFlow(null)}
         />
       )}
     </div>
