@@ -2,6 +2,7 @@
 import './index.css';
 
 import { StrictMode, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { createRoot } from 'react-dom/client';
 import { showToast } from '@devvit/web/client';
 import type {
@@ -655,25 +656,72 @@ function MainApp({
           {messages.map((msg, i) => (
             <div
               key={i}
-              className={`flex flex-col gap-1 max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
+              className={`group flex flex-col gap-1 max-w-[85%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
             >
               <div
-                className={`px-3 py-2 rounded-xl text-sm whitespace-pre-wrap ${
+                className={`px-3 py-2 rounded-xl text-sm ${
                   msg.role === 'user'
-                    ? 'bg-[#ff4500] text-white rounded-br-sm'
+                    ? 'bg-[#ff4500] text-white rounded-br-sm whitespace-pre-wrap'
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-sm'
                 }`}
               >
-                {msg.content}
+                {msg.role === 'user' ? (
+                  msg.content
+                ) : (
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => <h1 className="text-base font-bold mt-2 mb-1">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-sm font-bold mt-2 mb-1">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-sm font-semibold mt-1 mb-0.5">{children}</h3>,
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                      strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                      em: ({ children }) => <em className="italic">{children}</em>,
+                      ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+                      li: ({ children }) => <li className="text-sm">{children}</li>,
+                      code: ({ children, className }) =>
+                        className ? (
+                          <code className="block bg-gray-200 dark:bg-gray-800 rounded p-2 text-xs font-mono whitespace-pre-wrap mt-1 mb-2 overflow-x-auto">{children}</code>
+                        ) : (
+                          <code className="bg-gray-200 dark:bg-gray-800 rounded px-1 text-xs font-mono">{children}</code>
+                        ),
+                      pre: ({ children }) => <pre className="bg-gray-200 dark:bg-gray-800 rounded p-2 text-xs font-mono whitespace-pre-wrap mt-1 mb-2 overflow-x-auto">{children}</pre>,
+                      blockquote: ({ children }) => <blockquote className="border-l-2 border-gray-400 pl-2 italic text-gray-600 dark:text-gray-400 my-1">{children}</blockquote>,
+                      hr: () => <hr className="border-gray-300 dark:border-gray-600 my-2" />,
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
+                )}
               </div>
-              <span className={`text-xs px-1 ${modeBadge[msg.mode]} rounded-full`}>
-                {modeLabel[msg.mode]}
-              </span>
+              <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                <span className={`text-xs px-1 ${modeBadge[msg.mode]} rounded-full`}>
+                  {modeLabel[msg.mode]}
+                </span>
+                <span className="text-xs text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                {msg.role === 'assistant' && (
+                  <button
+                    onClick={() => {
+                      void navigator.clipboard.writeText(msg.content);
+                      showToast({ text: 'Copied', appearance: 'success' });
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  >
+                    Copy
+                  </button>
+                )}
+              </div>
             </div>
           ))}
           {thinking && (
-            <div className="self-start bg-gray-100 dark:bg-gray-700 px-3 py-2 rounded-xl rounded-bl-sm text-sm text-gray-500 dark:text-gray-400 animate-pulse">
-              Thinking…
+            <div className="self-start bg-gray-100 dark:bg-gray-700 px-4 py-3 rounded-xl rounded-bl-sm">
+              <div className="flex gap-1.5 items-center">
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+              </div>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -721,6 +769,16 @@ function MainApp({
               History
             </button>
             <button
+              onClick={() => {
+                void navigator.clipboard.writeText(workingConfig);
+                showToast({ text: 'Config copied', appearance: 'success' });
+              }}
+              disabled={!workingConfig.trim()}
+              className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-40"
+            >
+              Copy
+            </button>
+            <button
               onClick={handleReplaceClick}
               className="text-xs px-2 py-1 rounded border border-red-300 text-red-600 dark:border-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
             >
@@ -739,9 +797,16 @@ function MainApp({
         {/* YAML viewer */}
         <div className="flex-1 overflow-auto p-4">
           {workingConfig.trim() ? (
-            <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
-              {workingConfig}
-            </pre>
+            <div className="font-mono text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+              {workingConfig.split('\n').map((line, i) => (
+                <div key={i} className="flex">
+                  <span className="select-none text-right text-gray-400 dark:text-gray-600 mr-4 w-7 shrink-0 text-xs pt-px">
+                    {i + 1}
+                  </span>
+                  <span className="whitespace-pre-wrap break-words min-w-0">{line || ' '}</span>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm text-center px-6">
               <div className="flex flex-col items-center gap-2">

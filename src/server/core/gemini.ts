@@ -72,6 +72,13 @@ type GeminiContent = {
   parts: [{ text: string }];
 };
 
+const RETRYABLE_STATUSES = new Set([429, 500, 503]);
+const RETRY_DELAYS_MS = [1000, 2000];
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function callGemini(
   model: string,
   systemInstruction: string,
@@ -85,27 +92,44 @@ async function callGemini(
     generationConfig: { temperature: 0.4 },
   };
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  let lastError: Error | null = null;
 
-  if (!res.ok) {
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      await sleep(RETRY_DELAYS_MS[attempt - 1]!);
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as {
+        candidates: [{ content: { parts: [{ text: string }] } }];
+        usageMetadata: { promptTokenCount: number; candidatesTokenCount: number };
+      };
+      return {
+        text: data.candidates[0].content.parts[0].text,
+        inputTokens: data.usageMetadata.promptTokenCount,
+        outputTokens: data.usageMetadata.candidatesTokenCount,
+      };
+    }
+
+    if (RETRYABLE_STATUSES.has(res.status)) {
+      lastError =
+        res.status === 429
+          ? new Error('Gemini is rate-limited — please try again in a moment.')
+          : new Error('Gemini is temporarily unavailable — please try again in a moment.');
+      continue;
+    }
+
     const err = await res.text();
     throw new Error(`Gemini API error ${res.status}: ${err}`);
   }
 
-  const data = (await res.json()) as {
-    candidates: [{ content: { parts: [{ text: string }] } }];
-    usageMetadata: { promptTokenCount: number; candidatesTokenCount: number };
-  };
-
-  return {
-    text: data.candidates[0].content.parts[0].text,
-    inputTokens: data.usageMetadata.promptTokenCount,
-    outputTokens: data.usageMetadata.candidatesTokenCount,
-  };
+  throw lastError ?? new Error('Gemini request failed after retries.');
 }
 
 function buildSystemPrompt(mode: AppMode, currentConfig: string): string {
