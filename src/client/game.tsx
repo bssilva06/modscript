@@ -280,9 +280,30 @@ function VersionHistoryModal({
   onRevert: (id: string) => void;
   onClose: () => void;
 }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [contentCache, setContentCache] = useState<Record<string, string | 'loading' | 'error'>>({});
+
+  const toggleExpand = async (revId: string) => {
+    if (expandedId === revId) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(revId);
+    if (contentCache[revId]) return;
+    setContentCache((prev) => ({ ...prev, [revId]: 'loading' }));
+    try {
+      const res = await fetch(`/api/revision-content?id=${encodeURIComponent(revId)}`);
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json() as { type: string; content: string };
+      setContentCache((prev) => ({ ...prev, [revId]: data.content }));
+    } catch {
+      setContentCache((prev) => ({ ...prev, [revId]: 'error' }));
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full p-6 flex flex-col gap-4 max-h-[80vh]">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-2xl w-full p-6 flex flex-col gap-4 max-h-[85vh]">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">Version History</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -304,29 +325,58 @@ function VersionHistoryModal({
             <div className="overflow-y-auto flex-1 flex flex-col gap-2">
               {(flow.step === 'view' ? flow.revisions : []).map((rev) => {
                 const isReverting = flow.step === 'reverting' && flow.revisionId === rev.id;
+                const isExpanded = expandedId === rev.id;
+                const cachedContent = contentCache[rev.id];
                 return (
                   <div
                     key={rev.id}
-                    className="flex items-start justify-between gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700"
+                    className="flex flex-col rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 overflow-hidden"
                   >
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-xs font-medium text-gray-700 dark:text-gray-200">
-                        {new Date(rev.timestamp).toLocaleString()}
-                      </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">by u/{rev.author}</span>
-                      {rev.reason && (
-                        <span className="text-xs text-gray-400 dark:text-gray-500 truncate" title={rev.reason}>
-                          {rev.reason.length > 60 ? rev.reason.slice(0, 60) + '…' : rev.reason}
+                    <div className="flex items-start justify-between gap-3 p-3">
+                      <div className="flex flex-col gap-0.5 min-w-0">
+                        <span className="text-xs font-medium text-gray-700 dark:text-gray-200">
+                          {new Date(rev.timestamp).toLocaleString()}
                         </span>
-                      )}
+                        <span className="text-xs text-gray-500 dark:text-gray-400">by u/{rev.author}</span>
+                        {rev.reason && (
+                          <span className="text-xs text-gray-400 dark:text-gray-500 break-words">
+                            {rev.reason}
+                          </span>
+                        )}
+                      </div>
+                      <div className="shrink-0 flex gap-1.5">
+                        <button
+                          onClick={() => void toggleExpand(rev.id)}
+                          disabled={flow.step === 'reverting'}
+                          className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-500 text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors disabled:opacity-40"
+                        >
+                          {isExpanded ? 'Hide' : 'View'}
+                        </button>
+                        <button
+                          onClick={() => onRevert(rev.id)}
+                          disabled={flow.step === 'reverting'}
+                          className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-500 text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors disabled:opacity-40"
+                        >
+                          {isReverting ? 'Reverting…' : 'Revert'}
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => onRevert(rev.id)}
-                      disabled={flow.step === 'reverting'}
-                      className="shrink-0 text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-500 text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors disabled:opacity-40"
-                    >
-                      {isReverting ? 'Reverting…' : 'Revert'}
-                    </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-gray-200 dark:border-gray-600">
+                        {!cachedContent || cachedContent === 'loading' ? (
+                          <div className="p-3 text-xs text-gray-400 animate-pulse">Loading…</div>
+                        ) : cachedContent === 'error' ? (
+                          <div className="p-3 text-xs text-red-500">Failed to load revision content.</div>
+                        ) : cachedContent.trim() === '' ? (
+                          <div className="p-3 text-xs text-gray-400 italic">Empty config at this revision.</div>
+                        ) : (
+                          <pre className="p-3 text-xs font-mono text-gray-800 dark:text-gray-100 overflow-auto max-h-72 whitespace-pre leading-relaxed">
+                            {cachedContent}
+                          </pre>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -90,3 +90,8 @@ export type RevertResponse = {
   success: boolean;
   content: string;
 };
+
+export type RevisionContentResponse = {
+  type: 'revision-content';
+  content: string;
+};

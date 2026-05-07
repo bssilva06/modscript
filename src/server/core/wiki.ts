@@ -85,6 +85,19 @@ export async function getRevisions(subredditName: string): Promise<WikiRevision[
   }
 }
 
+export async function getRevisionContent(subredditName: string, revisionId: string): Promise<string> {
+  try {
+    const page = await reddit.getWikiPage(
+      subredditName,
+      WIKI_PAGE,
+      revisionId as `${string}-${string}-${string}-${string}-${string}`
+    );
+    return page.content ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export async function revertTo(subredditName: string, revisionId: string): Promise<string> {
   const current = await getCurrent(subredditName);
   await backupCurrent(subredditName, current);
