@@ -2,10 +2,27 @@
 
 > **AI-powered AutoModerator assistant, native to Reddit's mod panel.**
 
-[![Hackathon](https://img.shields.io/badge/Hackathon-Reddit%20Mod%20Tools%20%26%20Migrated%20Apps-FF4500?style=flat-square)](https://developers.reddit.com)
-[![Category](https://img.shields.io/badge/Category-New%20Mod%20Tool-orange?style=flat-square)](https://developers.reddit.com)
-[![Platform](https://img.shields.io/badge/Platform-Devvit%20Web-blue?style=flat-square)](https://developers.reddit.com)
-[![AI](https://img.shields.io/badge/AI-Google%20Gemini%202.5-4285F4?style=flat-square)](https://ai.google.dev)
+[![Hackathon](https://img.shields.io/badge/Hackathon-Reddit%20Mod%20Tools%20%26%20Migrated%20Apps-FF4500?style=for-the-badge)](https://developers.reddit.com)
+[![Category](https://img.shields.io/badge/Category-New%20Mod%20Tool-FF8717?style=for-the-badge)](https://developers.reddit.com)
+[![Platform](https://img.shields.io/badge/Platform-Devvit%20Web-2563EB?style=for-the-badge)](https://developers.reddit.com)
+[![AI](https://img.shields.io/badge/AI-Gemini%202.5-4285F4?style=for-the-badge)](https://ai.google.dev)
+
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=111111)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=ffffff)
+![Vite](https://img.shields.io/badge/Vite-7-646CFF?style=flat-square&logo=vite&logoColor=ffffff)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=ffffff)
+![Node](https://img.shields.io/badge/Node-22-339933?style=flat-square&logo=nodedotjs&logoColor=ffffff)
+![Hono](https://img.shields.io/badge/Hono-4-E36002?style=flat-square)
+![YAML Safe](https://img.shields.io/badge/YAML-validated-22C55E?style=flat-square)
+![No External UI](https://img.shields.io/badge/External%20tools-none-111827?style=flat-square)
+
+**Generate AutoMod rules. Explain inherited configs. Catch risky changes before they reach the wiki.**
+
+| Generate | Explain | Conflict Check | Save Guardrails |
+|---|---|---|---|
+| Plain English to AutoMod YAML | Rule-by-rule summaries | Duplicate and ordering review | YAML validation, diff preview, risk badge |
+
+**Quick Links:** [Features](#features) · [Safety Guarantees](#safety-guarantees) · [Architecture](#architecture) · [User Flows](#user-flows) · [Local Development](#local-development)
 
 ---
 
@@ -25,6 +42,17 @@ There is no AI-native AutoMod tool built into Reddit's platform — until now.
 ## What ModScript Does
 
 ModScript lives inside Reddit's native mod panel as a Devvit app. Moderators open it directly from their subreddit's mod tools menu and get a **conversational AI interface** — powered by Google Gemini — to generate, explain, and audit their AutoModerator config without writing a single line of YAML and without ever leaving Reddit.
+
+### Feature Snapshot
+
+| Area | Built In |
+|---|---|
+| **AI workflow** | Generate, Explain, Conflict Check |
+| **Save safety** | YAML validation, diff preview, Redis backup, native wiki revision history |
+| **Judge/demo flow** | Local demo config, starter templates, example prompt chips |
+| **Risk visibility** | Low/Medium/High badge, deterministic safety checklist, false-positive notes |
+| **Permissions** | Wiki readability check and save-permission readiness strip |
+| **Cost controls** | Kill switch, daily quotas, max input size, short-lived usage logs |
 
 ### Three Core Modes
 
