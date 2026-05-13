@@ -61,6 +61,8 @@ Type a plain English description of a rule. ModScript generates valid, formatted
 
 - **Append-only by default** — generated rules are added to the bottom of your existing config. A 400-line hand-tuned config is never silently overwritten.
 - **Multi-turn refinement** — follow up in the same conversation to adjust scope, conditions, or phrasing.
+- **Example prompt chips** — common starter requests like account-age filters, spam phrases, required flair, suspicious links, and low-karma comments are one click away.
+- **"Why this rule is safe" review** — generated YAML gets a deterministic checklist showing append-only behavior, detected actions, detected trigger fields, false-positive notes, and a test reminder. This does not use an extra AI call.
 - **Explicit rewrite mode** — a clearly labeled "Rewrite full config" option is available behind a confirmation dialog. Triggers an automatic Redis backup before any change is made.
 
 ### Explain Mode
@@ -80,7 +82,11 @@ Output is framed as **review suggestions** — structural pattern analysis for a
 
 ### Wiki Read/Write with Guardrails
 - **Auto-fetches** the subreddit's `config/automoderator` wiki page on open — no copy/pasting required.
+- **Readiness check on open** — shows whether the wiki is readable and whether the current moderator has `wiki` or `all` permissions required to save. Generate, Explain, Conflict Check, copy, and demo loading still work without write permission.
+- **YAML validation before save** — every save path validates the final YAML before showing the diff preview, and the server validates again before writing to Reddit's wiki.
+- **Validation status in the editor** — the code panel footer shows `valid yaml`, `invalid yaml`, or `not checked`.
 - **Diff preview before every save** — additions in green, removals in red. No save without explicit confirmation.
+- **Pre-save risk badge** — unsaved changes are labeled Low, Medium, or High based on deterministic checks such as report-only actions, remove/filter actions, regex breadth, author age/karma gates, and full-config rewrites.
 - **Meaningful revision history** — every save writes a human-readable reason string to Reddit's native wiki revision history (e.g., `"ModScript — appended rule: remove posts from accounts under 3 days old"`).
 - **Redis backup before every write** — previous config snapshotted immediately before any wiki update, with the last 5 backups retained per subreddit.
 
@@ -97,6 +103,11 @@ On first open, mods choose a subreddit type to pre-load a sensible starting conf
 | **Support / Mental Health** | Communities requiring stricter content standards |
 | **News** | News aggregation and discussion communities |
 | **Start blank** | Building from scratch |
+
+### Demo Config
+For judging, demos, and first-run exploration, ModScript includes a local "Load demo config" option. It loads a realistic multi-rule AutoModerator config into the editor without writing anything to Reddit. The demo config is designed to exercise Generate, Explain, Conflict Check, YAML validation, risk badges, and diff previews.
+
+Demo loading is static and local to the app: no external domain is contacted, no AI call is made, no quota is consumed, and nothing is saved until the moderator explicitly confirms a later wiki save.
 
 ### Version History
 A revision list modal showing the last 10 native Reddit wiki revisions, each with timestamp, author, and reason string. One-click revert to any prior revision, with a Redis backup taken before reverting.
@@ -122,9 +133,13 @@ All quotas are tunable via global settings without redeploying. For the hackatho
 > ModScript treats your existing AutoMod config as irreplaceable. Every decision in the save flow reflects this.
 
 - **Append is always the default.** A 400-line config is never silently rewritten.
+- **Invalid YAML is blocked before write.** Client-side validation stops bad YAML before the diff preview, and server-side validation prevents bypassing the UI.
 - **Diff preview is mandatory.** Every save shows exactly what will change before committing.
+- **Risk is visible before save.** The editor and diff modal show Low/Medium/High risk with concise reasons so moderators can spot broad removals, broad regexes, or full rewrites before committing.
+- **Save permission is explicit.** The app checks moderator permissions and disables wiki writes when `wiki` or `all` permission is missing.
 - **Redis backup before every write.** Fast-restore snapshot taken immediately before each wiki update.
 - **Reddit's native revision history** is the canonical record — visible in the wiki's revision log, one-click revertible from within ModScript.
+- **Safety review is deterministic.** Generated rules get a local checklist of action, trigger fields, and false-positive notes without making extra AI calls.
 - **Conflict Check copy is scoped.** Output is structural pattern analysis for human review, never a claim about which rules fire at runtime.
 - **Privacy disclosure on first launch.** No AI calls happen until the mod has acknowledged what data is sent to Gemini.
 
@@ -202,6 +217,8 @@ src/
 │   │   └── triggers.ts          # onAppInstall lifecycle trigger
 │   └── core/
 │       ├── gemini.ts            # Gemini API calls + mode-specific prompts
+│       ├── yaml.ts              # Server-side YAML parser/validator
+│       ├── demo.ts              # Local demo AutoMod config
 │       ├── wiki.ts              # AutoMod wiki read/write + Redis backup
 │       ├── quota.ts             # F11 cost controls (kill switch, quotas, logging)
 │       ├── templates.ts         # Starter config YAML by subreddit type
@@ -238,8 +255,10 @@ Based on a review of the Devvit App Directory and Devvit community, no AI-native
 3. Privacy disclosure modal → acknowledge once
 4. App auto-fetches existing AutoMod config
 5. Template picker: choose General / Gaming / Support / News / Start blank
-6. Chat with Gemini to build or refine rules (append-only by default)
-7. "Save to Wiki" → diff preview → confirm → wiki updated + Redis backup
+6. Optionally load the local demo config to explore the app without writing to Reddit
+7. Chat with Gemini to build or refine rules (append-only by default)
+8. Review YAML validation, safety notes, and risk badge
+9. "Save to Wiki" → YAML validation → diff preview → confirm → wiki updated + Redis backup
 ```
 
 ### Returning Mod
