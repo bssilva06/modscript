@@ -22,6 +22,12 @@ export type InitResponse = {
   privacyAcked: boolean;
   currentConfig: string;
   quota: Record<AppMode, QuotaModeStatus>;
+  readiness: {
+    wikiReadable: boolean;
+    wikiWritable: boolean;
+    modPermissions: string[];
+    message?: string;
+  };
 };
 
 export type PrivacyAckResponse = {
@@ -68,6 +74,23 @@ export type SaveRequest = {
 export type SaveResponse = {
   type: 'save';
   success: boolean;
+};
+
+export type ValidateYamlRequest = {
+  content: string;
+};
+
+export type ValidateYamlResponse = {
+  type: 'validate-yaml';
+  valid: boolean;
+  message: string;
+  line?: number;
+  column?: number;
+};
+
+export type DemoConfigResponse = {
+  type: 'demo-config';
+  yaml: string;
 };
 
 export type ErrorResponse = {

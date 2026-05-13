@@ -4,16 +4,28 @@ import type { WikiRevision } from '../../shared/api';
 const WIKI_PAGE = 'config/automoderator';
 const MAX_BACKUPS = 5;
 
+export type CurrentWikiConfig = {
+  content: string;
+  readable: boolean;
+  message?: string;
+};
+
 function backupIndexKey(subredditName: string): string {
   return `automod:backup-index:${subredditName}`;
 }
 
 export async function getCurrent(subredditName: string): Promise<string> {
+  const result = await getCurrentWithStatus(subredditName);
+  return result.content;
+}
+
+export async function getCurrentWithStatus(subredditName: string): Promise<CurrentWikiConfig> {
   try {
     const page = await reddit.getWikiPage(subredditName, WIKI_PAGE);
-    return page.content ?? '';
-  } catch {
-    return '';
+    return { content: page.content ?? '', readable: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Wiki page could not be read';
+    return { content: '', readable: false, message };
   }
 }
 

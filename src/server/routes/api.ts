@@ -16,11 +16,16 @@ import type {
   RevertResponse,
   RevisionContentResponse,
   ErrorResponse,
+  ValidateYamlRequest,
+  ValidateYamlResponse,
+  DemoConfigResponse,
 } from '../../shared/api';
 import { checkQuota, incrementQuota, logUsage, getQuotaStatus } from '../core/quota';
-import { getCurrent, saveAppend, saveReplace, getRevisions, revertTo, getRevisionContent } from '../core/wiki';
+import { getCurrent, getCurrentWithStatus, saveAppend, saveReplace, getRevisions, revertTo, getRevisionContent } from '../core/wiki';
 import { generateRule, explainConfig, conflictCheck, estimateTokens } from '../core/gemini';
 import { getTemplate } from '../core/templates';
+import { validateAutomodYaml } from '../core/yaml';
+import { DEMO_AUTOMOD_CONFIG } from '../core/demo';
 
 export const api = new Hono();
 
@@ -33,11 +38,15 @@ api.get('/init', async (c) => {
 
   try {
     const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
-    const [privacyRaw, currentConfig, quota] = await Promise.all([
+    const currentUser = await reddit.getCurrentUser();
+    const [privacyRaw, currentWiki, quota, modPermissions] = await Promise.all([
       redis.get(`privacy:acked:${subredditName}:${username}`),
-      getCurrent(subredditName),
+      getCurrentWithStatus(subredditName),
       getQuotaStatus(subredditName),
+      currentUser?.getModPermissionsForSubreddit(subredditName) ?? Promise.resolve([]),
     ]);
+    const modPermissionNames = modPermissions.map((permission) => String(permission));
+    const wikiWritable = modPermissionNames.includes('wiki') || modPermissionNames.includes('all');
 
     return c.json<InitResponse>({
       type: 'init',
@@ -45,13 +54,28 @@ api.get('/init', async (c) => {
       subredditName,
       username,
       privacyAcked: privacyRaw === 'true',
-      currentConfig,
+      currentConfig: currentWiki.content,
       quota,
+      readiness: {
+        wikiReadable: currentWiki.readable,
+        wikiWritable,
+        modPermissions: modPermissionNames,
+        message: currentWiki.message,
+      },
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     return c.json<ErrorResponse>({ status: 'error', message: `Init failed: ${msg}` }, 400);
   }
+});
+
+api.post('/validate-yaml', async (c) => {
+  const body = await c.req.json<ValidateYamlRequest>();
+  return c.json<ValidateYamlResponse>(validateAutomodYaml(body.content));
+});
+
+api.get('/demo-config', (c) => {
+  return c.json<DemoConfigResponse>({ type: 'demo-config', yaml: DEMO_AUTOMOD_CONFIG });
 });
 
 api.post('/privacy-ack', async (c) => {
@@ -152,6 +176,14 @@ api.post('/save', async (c) => {
   const body = await c.req.json<SaveRequest>();
 
   try {
+    const contentToValidate = body.appendMode
+      ? `${(await getCurrent(subredditName)).trimEnd()}\n${body.content}`.trim()
+      : body.content;
+    const validation = validateAutomodYaml(contentToValidate);
+    if (!validation.valid) {
+      return c.json<ErrorResponse>({ status: 'error', message: `Invalid YAML: ${validation.message}` }, 400);
+    }
+
     if (body.appendMode) {
       await saveAppend(subredditName, body.content, body.summary);
     } else {

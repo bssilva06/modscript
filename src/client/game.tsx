@@ -20,11 +20,19 @@ import type {
   RevertRequest,
   RevertResponse,
   QuotaModeStatus,
+  ValidateYamlResponse,
+  DemoConfigResponse,
 } from '../shared/api';
 
 // --- Types ---
 
 type QuotaState = Record<AppMode, QuotaModeStatus>;
+type ReadinessState = InitResponse['readiness'];
+type YamlValidationState = { status: 'unchecked' } | { status: 'valid'; message: string } | { status: 'invalid'; message: string; line?: number; column?: number };
+type SafetyReview = { action: string; triggers: string[]; notes: string[] };
+type RiskLevel = 'Low' | 'Medium' | 'High';
+type RiskAnalysis = { level: RiskLevel; reasons: string[] };
+type ClientChatMessage = ChatMessage & { safetyReview?: SafetyReview };
 
 const DEFAULT_QUOTA: QuotaState = {
   generate: { used: 0, cap: 50 },
@@ -32,11 +40,18 @@ const DEFAULT_QUOTA: QuotaState = {
   conflict: { used: 0, cap: 5  },
 };
 
+const DEFAULT_READINESS: ReadinessState = {
+  wikiReadable: false,
+  wikiWritable: false,
+  modPermissions: [],
+  message: 'Readiness not checked',
+};
+
 type AppState =
   | { stage: 'loading' }
-  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState }
-  | { stage: 'template'; postId: string; subredditName: string; username: string }
-  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState };
+  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState }
+  | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState }
+  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState };
 
 type DiffLine = { kind: 'same' | 'added' | 'removed'; text: string };
 
@@ -77,6 +92,85 @@ function computeDiff(oldText: string, newText: string): DiffLine[] {
   return result;
 }
 
+function detectActions(config: string): string[] {
+  const matches = [...config.matchAll(/^\s*action:\s*["']?([a-z_]+)/gim)];
+  return [...new Set(matches.flatMap((match) => (match[1] ? [match[1].toLowerCase()] : [])))];
+}
+
+function detectTriggers(config: string): string[] {
+  const triggerNames = ['title', 'body', 'author', 'url', 'domain', 'flair', 'account_age', 'combined_karma', 'comment_karma', 'link_karma'];
+  return triggerNames.filter((name) => new RegExp(`(^|\\n)\\s*[~]?[^\\n#]*${name}`, 'i').test(config));
+}
+
+function buildSafetyReview(yaml: string): SafetyReview {
+  const actions = detectActions(yaml);
+  const triggers = detectTriggers(yaml);
+  const primaryAction = actions[0] ?? 'none detected';
+  const notes = [
+    'Append-only change; existing rules are kept until you choose replace all.',
+    `Detected action: ${actions.length > 0 ? actions.join(', ') : 'none'}.`,
+    `Detected trigger fields: ${triggers.length > 0 ? triggers.join(', ') : 'none'}.`,
+  ];
+
+  if ((actions.includes('remove') || actions.includes('filter')) && (triggers.includes('body') || triggers.includes('title')) && triggers.length <= 2) {
+    notes.push('Possible false positives: broad title/body matching can catch legitimate posts.');
+  } else if (actions.includes('report')) {
+    notes.push('Report-only rules are lower impact because moderators review before action.');
+  } else {
+    notes.push('Possible false positives depend on how narrow the trigger values are.');
+  }
+
+  notes.push('Test on a low-traffic post before relying on new rules.');
+  return { action: primaryAction, triggers, notes };
+}
+
+function analyzeRisk(config: string, replaceAll: boolean): RiskAnalysis {
+  const lower = config.toLowerCase();
+  const actions = detectActions(config);
+  const triggers = detectTriggers(config);
+  const reasons: string[] = [];
+  let score = replaceAll ? 2 : 0;
+
+  if (replaceAll) reasons.push('replaces full config');
+  if (actions.includes('remove')) {
+    score += 2;
+    reasons.push('removes matching content');
+  } else if (actions.includes('filter')) {
+    score += 1;
+    reasons.push('filters to modqueue');
+  } else if (actions.includes('report')) {
+    reasons.push('report-only action');
+  } else if (actions.some((action) => action.includes('flair'))) {
+    reasons.push('flair-only change');
+  }
+
+  if (/body\+title|title\s*\(|body\s*\(|regex/.test(lower)) {
+    score += lower.includes('regex') ? 2 : 1;
+    reasons.push('title/body pattern matching');
+  }
+  if (/account_age|combined_karma|comment_karma|link_karma/.test(lower)) {
+    score -= 1;
+    reasons.push('limited by author age or karma');
+  }
+  if (/author:\s*\n|author\s*\(/i.test(config)) {
+    score -= 1;
+    reasons.push('narrow author condition');
+  }
+  if ((actions.includes('remove') || actions.includes('filter')) && triggers.length <= 1) {
+    score += 1;
+    reasons.push('few narrowing conditions detected');
+  }
+
+  const level: RiskLevel = score >= 3 ? 'High' : score >= 1 ? 'Medium' : 'Low';
+  return { level, reasons: reasons.slice(0, 3) };
+}
+
+function validationLabel(validation: YamlValidationState): string {
+  if (validation.status === 'valid') return 'valid yaml';
+  if (validation.status === 'invalid') return 'invalid yaml';
+  return 'not checked';
+}
+
 // --- Design tokens ---
 
 const modeAccentBorder: Record<AppMode, string> = {
@@ -110,6 +204,46 @@ function ModalShell({ children, width = 'max-w-md' }: { children: ReactNode; wid
 }
 
 // --- Sub-components ---
+
+function RiskBadge({ analysis }: { analysis: RiskAnalysis }) {
+  const tone = analysis.level === 'High'
+    ? 'text-red-400 border-red-400/30 bg-red-400/10'
+    : analysis.level === 'Medium'
+    ? 'text-amber-400 border-amber-400/30 bg-amber-400/10'
+    : 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10';
+  return (
+    <span title={analysis.reasons.join('; ')} className={`text-[10px] font-mono border px-1.5 py-0.5 rounded-sm ${tone}`}>
+      risk: {analysis.level.toLowerCase()}
+    </span>
+  );
+}
+
+function SafetyPanel({ review }: { review: SafetyReview }) {
+  return (
+    <div className="mt-1 bg-[#fdfdfd] dark:bg-[#111118] border border-[#e8e8e8] dark:border-[#252535] px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-[#777] max-w-[86%]">
+      <div className="uppercase tracking-widest text-[#ff4500] mb-1">why this rule is safe</div>
+      <div className="space-y-0.5">
+        {review.notes.map((note) => (
+          <div key={note} className="flex gap-1.5">
+            <span className="text-[#ff4500]/70">-</span>
+            <span>{note}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReadinessStrip({ readiness }: { readiness: ReadinessState }) {
+  return (
+    <div className="px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-[#fafafa] dark:bg-[#101016] font-mono text-[10px] text-[#777] dark:text-[#666] flex items-center gap-3">
+      <span>wiki readable: <span className={readiness.wikiReadable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiReadable ? 'yes' : 'no'}</span></span>
+      <span>save permission: <span className={readiness.wikiWritable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiWritable ? 'ready' : 'blocked'}</span></span>
+      <span className="truncate">perms: {readiness.modPermissions.length > 0 ? readiness.modPermissions.join(', ') : 'none'}</span>
+      {readiness.message && <span className="truncate text-amber-500">{readiness.message}</span>}
+    </div>
+  );
+}
 
 function PrivacyModal({ subredditName, onAck }: { subredditName: string; onAck: () => void }) {
   const [loading, setLoading] = useState(false);
@@ -171,8 +305,10 @@ const TEMPLATE_OPTIONS: { id: TemplateName; label: string; description: string }
 
 function TemplatePicker({
   onSelect,
+  onDemo,
 }: {
   onSelect: (id: TemplateName, yaml: string) => void;
+  onDemo: () => void;
 }) {
   const [loading, setLoading] = useState<TemplateName | null>(null);
 
@@ -219,6 +355,19 @@ function TemplatePicker({
             <div className="text-xs text-gray-500 dark:text-[#6a6a7a] mt-1 ml-4">{t.description}</div>
           </button>
         ))}
+        <button
+          onClick={onDemo}
+          disabled={loading !== null}
+          className="text-left p-3 border border-[#ff4500]/35 bg-[#ff4500]/5 hover:bg-[#ff4500]/10 transition-colors disabled:opacity-60 group"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[#ff4500] text-xs transition-opacity font-mono">▶</span>
+            <div className="font-mono text-sm font-semibold text-gray-900 dark:text-[#e0e0e8]">
+              Load demo config
+            </div>
+          </div>
+          <div className="text-xs text-gray-500 dark:text-[#6a6a7a] mt-1 ml-4">Use a local multi-rule config for judging and demos.</div>
+        </button>
       </div>
     </ModalShell>
   );
@@ -231,6 +380,7 @@ function DiffPreviewModal({
   onConfirm,
   onCancel,
   saving,
+  risk,
 }: {
   oldContent: string;
   newContent: string;
@@ -238,6 +388,7 @@ function DiffPreviewModal({
   onConfirm: () => void;
   onCancel: () => void;
   saving: boolean;
+  risk: RiskAnalysis;
 }) {
   const diff = computeDiff(oldContent, appendMode ? oldContent + newContent : newContent);
   const changes = diff.filter((l) => l.kind !== 'same').length;
@@ -250,6 +401,10 @@ function DiffPreviewModal({
           <h2 className="text-base font-mono font-bold text-gray-900 dark:text-[#e0e0e8]">
             {changes} line{changes !== 1 ? 's' : ''} changed
           </h2>
+          <div className="mt-2 flex items-center gap-2">
+            <RiskBadge analysis={risk} />
+            <span className="text-[10px] font-mono text-[#888]">{risk.reasons.join(' / ')}</span>
+          </div>
         </div>
         <button
           onClick={onCancel}
@@ -470,14 +625,16 @@ function MainApp({
   username,
   initialConfig,
   initialQuota,
+  readiness,
 }: {
   subredditName: string;
   username: string;
   initialConfig: string;
   initialQuota: QuotaState;
+  readiness: ReadinessState;
 }) {
   const [mode, setMode] = useState<AppMode>('generate');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ClientChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
 
@@ -498,18 +655,44 @@ function MainApp({
   const [saveFlow, setSaveFlow] = useState<SaveFlow>(null);
   const [historyFlow, setHistoryFlow] = useState<HistoryFlow | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [yamlValidation, setYamlValidation] = useState<YamlValidationState>({ status: 'unchecked' });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
 
-  const pushMessage = useCallback((msg: ChatMessage) => {
+  useEffect(() => {
+    setYamlValidation({ status: 'unchecked' });
+  }, [workingConfig]);
+
+  const pushMessage = useCallback((msg: ClientChatMessage) => {
     setMessages((prev) => [...prev, msg]);
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const validateYaml = useCallback(async (content: string) => {
+    const res = await fetch('/api/validate-yaml', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error('Validation failed');
+    const data = await res.json() as ValidateYamlResponse;
+    if (data.valid) {
+      setYamlValidation({ status: 'valid', message: data.message });
+    } else {
+      setYamlValidation({
+        status: 'invalid',
+        message: data.message,
+        ...(data.line ? { line: data.line } : {}),
+        ...(data.column ? { column: data.column } : {}),
+      });
+    }
+    return data;
+  }, []);
+
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || thinking) return;
     setInput('');
     setThinking(true);
@@ -531,9 +714,15 @@ function MainApp({
         }
         const data = await res.json() as GenerateResponse;
         if (data.yaml) {
-          setWorkingConfig((prev) => prev.trimEnd() + '\n' + data.yaml);
+          setWorkingConfig((prev) => (prev.trimEnd().length > 0 ? `${prev.trimEnd()}\n${data.yaml}` : data.yaml));
         }
-        pushMessage({ role: 'assistant', content: data.assistantMessage, mode, timestamp: Date.now() });
+        pushMessage({
+          role: 'assistant',
+          content: data.assistantMessage,
+          mode,
+          timestamp: Date.now(),
+          ...(data.yaml ? { safetyReview: buildSafetyReview(data.yaml) } : {}),
+        });
         setQuota((q) => ({ ...q, [mode]: { ...q[mode], used: Math.min(q[mode].used + 1, q[mode].cap) } }));
       } else if (mode === 'explain') {
         const res = await fetch('/api/explain', {
@@ -588,22 +777,42 @@ function MainApp({
     setInput('Check my config for conflicts and issues.');
   };
 
-  const handleSaveClick = () => {
+  const handleSaveClick = async () => {
     const hasNewContent = workingConfig !== savedConfig;
     if (!hasNewContent) {
       showToast({ text: 'No unsaved changes', appearance: 'neutral' });
       return;
     }
-    setSaveFlow({ step: 'diff-preview', appendMode: true, contentToSave: workingConfig, saving: false });
+    if (!readiness.wikiWritable) {
+      showToast({ text: 'Manage Wiki Pages permission required to save', appearance: 'neutral' });
+      return;
+    }
+    const validation = await validateYaml(workingConfig);
+    if (!validation.valid) {
+      const location = validation.line ? ` at ${validation.line}:${validation.column ?? 1}` : '';
+      showToast({ text: `Invalid YAML${location}: ${validation.message}`, appearance: 'neutral' });
+      return;
+    }
+    setSaveFlow({ step: 'diff-preview', appendMode: true, contentToSave: workingConfig.slice(savedConfig.length).replace(/^\n/, ''), saving: false });
   };
 
   const handleReplaceClick = () => {
+    if (!readiness.wikiWritable) {
+      showToast({ text: 'Manage Wiki Pages permission required to replace wiki config', appearance: 'neutral' });
+      return;
+    }
     setSaveFlow({ step: 'rewrite-confirm' });
   };
 
-  const confirmRewrite = () => {
-    const newContent = workingConfig.slice(savedConfig.length).trim();
-    setSaveFlow({ step: 'diff-preview', appendMode: false, contentToSave: newContent, saving: false });
+  const confirmRewrite = async () => {
+    const validation = await validateYaml(workingConfig);
+    if (!validation.valid) {
+      const location = validation.line ? ` at ${validation.line}:${validation.column ?? 1}` : '';
+      showToast({ text: `Invalid YAML${location}: ${validation.message}`, appearance: 'neutral' });
+      setSaveFlow(null);
+      return;
+    }
+    setSaveFlow({ step: 'diff-preview', appendMode: false, contentToSave: workingConfig, saving: false });
   };
 
   const confirmSave = async () => {
@@ -621,13 +830,15 @@ function MainApp({
     });
 
     if (res.ok) {
-      setSavedConfig(saveFlow.contentToSave);
+      const separator = savedConfig.trimEnd().length > 0 && saveFlow.contentToSave.trim().length > 0 ? '\n' : '';
+      setSavedConfig(saveFlow.appendMode ? savedConfig.trimEnd() + separator + saveFlow.contentToSave : saveFlow.contentToSave);
       setSaveFlow(null);
       showToast({ text: 'Saved to wiki', appearance: 'success' });
     } else {
       const err = await res.json() as ErrorResponse;
       setSaveFlow({ ...saveFlow, saving: false });
-      showToast({ text: `Save failed: ${err.message}`, appearance: 'neutral' });
+      const permissionHint = /permission|wiki|403|moderator/i.test(err.message) ? 'Manage Wiki Pages permission required. ' : '';
+      showToast({ text: `Save failed: ${permissionHint}${err.message}`, appearance: 'neutral' });
     }
   };
 
@@ -663,8 +874,31 @@ function MainApp({
   };
 
   const hasUnsavedChanges = workingConfig !== savedConfig;
+  const activeRisk = analyzeRisk(hasUnsavedChanges ? workingConfig.slice(savedConfig.length) || workingConfig : workingConfig, false);
   const quotaPct = Math.min((quota[mode].used / quota[mode].cap) * 100, 100);
   const quotaExhausted = quota[mode].used >= quota[mode].cap;
+  const promptChips = [
+    'Remove posts from accounts under 3 days old',
+    'Filter common spam phrases',
+    'Require post flair',
+    'Report posts with suspicious links',
+    'Remove comments from very low karma accounts',
+    'Filter posts with repeated emoji spam',
+  ];
+
+  const loadDemoConfig = async () => {
+    const res = await fetch('/api/demo-config');
+    if (!res.ok) {
+      showToast({ text: 'Failed to load demo config', appearance: 'neutral' });
+      return;
+    }
+    const data = await res.json() as DemoConfigResponse;
+    setWorkingConfig(data.yaml);
+    setSavedConfig(data.yaml);
+    setIsEditing(false);
+    setYamlValidation({ status: 'unchecked' });
+    showToast({ text: 'Demo config loaded locally', appearance: 'success' });
+  };
 
   const placeholder: Record<AppMode, string> = {
     generate: 'Describe a rule, e.g. "Remove posts from accounts under 7 days old"',
@@ -729,6 +963,7 @@ function MainApp({
               />
             </div>
           </div>
+          <ReadinessStrip readiness={readiness} />
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
@@ -751,6 +986,20 @@ function MainApp({
                 <div className="text-[10px] font-mono mt-2 px-1 text-[#bbb] dark:text-[#444]">
                   ready<span className="animate-pulse text-[#ff4500]">{String.fromCharCode(9608)}</span>
                 </div>
+                {mode === 'generate' && (
+                  <div className="mt-4 flex flex-wrap gap-1.5 max-w-xs">
+                    {promptChips.map((chip) => (
+                      <button
+                        key={chip}
+                        onClick={() => void handleSend(chip)}
+                        disabled={thinking}
+                        className="text-[10px] font-mono border border-[#e0e0e0] dark:border-[#252535] text-[#777] dark:text-[#777] hover:text-[#ff4500] hover:border-[#ff4500]/40 px-2 py-1 rounded-sm transition-colors disabled:opacity-40"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -796,6 +1045,9 @@ function MainApp({
                     {msg.content}
                   </ReactMarkdown>
                 </div>
+              )}
+              {msg.role === 'assistant' && msg.safetyReview && (
+                <SafetyPanel review={msg.safetyReview} />
               )}
 
               <div className={`flex items-center gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
@@ -860,6 +1112,7 @@ function MainApp({
                 {String.fromCharCode(9679)} unsaved
               </span>
             )}
+            {hasUnsavedChanges && <RiskBadge analysis={activeRisk} />}
             {isEditing && (
               <span className="text-[10px] font-mono text-[#ff4500] border border-[#ff4500]/25 bg-[#ff4500]/5 px-1.5 py-0.5 rounded-sm">
                 editing
@@ -895,13 +1148,14 @@ function MainApp({
             </button>
             <button
               onClick={handleReplaceClick}
-              className="text-[10px] font-mono text-red-500/60 hover:text-red-400 hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider"
+              disabled={!readiness.wikiWritable}
+              className="text-[10px] font-mono text-red-500/60 hover:text-red-400 hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider disabled:opacity-30"
             >
               replace all
             </button>
             <button
-              onClick={handleSaveClick}
-              disabled={!hasUnsavedChanges}
+              onClick={() => void handleSaveClick()}
+              disabled={!hasUnsavedChanges || !readiness.wikiWritable}
               className="text-[10px] font-mono text-[#ff4500] hover:bg-[#ff4500]/10 px-2.5 py-1.5 transition-colors disabled:opacity-30 uppercase tracking-wider"
             >
               save to wiki
@@ -946,6 +1200,12 @@ function MainApp({
                       <div className="text-[#1e1e28] text-4xl mb-4 select-none">{ }</div>
                       <div className="text-xs text-[#2a2a35]">no config loaded</div>
                       <div className="text-[10px] text-[#1e1e28] mt-1">use generate mode to add your first rule</div>
+                      <button
+                        onClick={() => void loadDemoConfig()}
+                        className="mt-4 text-[10px] font-mono text-[#ff4500] border border-[#ff4500]/30 px-2.5 py-1.5 rounded-sm hover:bg-[#ff4500]/10 transition-colors uppercase tracking-wider"
+                      >
+                        load demo config
+                      </button>
                     </div>
                   </div>
                 )}
@@ -954,24 +1214,30 @@ function MainApp({
           )}
         </div>
 
-        <div className="px-4 py-1.5 border-t border-[#1e1e28] bg-[#0d0d12] text-[10px] font-mono text-[#2e2e3a] text-center shrink-0">
-          {isEditing
-            ? 'editing directly — click "view" to return to highlighted view, then save to wiki'
-            : 'AI-generated YAML — test on a low-traffic post before relying on new rules'}
+        <div className="px-4 py-1.5 border-t border-[#1e1e28] bg-[#0d0d12] text-[10px] font-mono text-[#2e2e3a] shrink-0 flex items-center justify-between">
+          <span>
+            {isEditing
+              ? 'editing directly — click "view" to return to highlighted view, then save to wiki'
+              : 'AI-generated YAML — test on a low-traffic post before relying on new rules'}
+          </span>
+          <span className={yamlValidation.status === 'invalid' ? 'text-red-400' : yamlValidation.status === 'valid' ? 'text-emerald-400' : 'text-[#4a4a5a]'}>
+            {validationLabel(yamlValidation)}
+          </span>
         </div>
       </div>
 
       {saveFlow?.step === 'rewrite-confirm' && (
-        <RewriteConfirmModal onConfirm={confirmRewrite} onCancel={() => setSaveFlow(null)} />
+        <RewriteConfirmModal onConfirm={() => void confirmRewrite()} onCancel={() => setSaveFlow(null)} />
       )}
       {saveFlow?.step === 'diff-preview' && (
         <DiffPreviewModal
           oldContent={savedConfig}
-          newContent={saveFlow.appendMode ? workingConfig.slice(savedConfig.length) : saveFlow.contentToSave}
+          newContent={saveFlow.contentToSave}
           appendMode={saveFlow.appendMode}
           onConfirm={() => void confirmSave()}
           onCancel={() => setSaveFlow(null)}
           saving={saveFlow.saving}
+          risk={analyzeRisk(saveFlow.contentToSave, !saveFlow.appendMode)}
         />
       )}
       {historyFlow !== null && (
@@ -990,6 +1256,13 @@ function MainApp({
 function App() {
   const [state, setState] = useState<AppState>({ stage: 'loading' });
 
+  const fetchDemoConfig = async () => {
+    const res = await fetch('/api/demo-config');
+    if (!res.ok) throw new Error('Failed to load demo config');
+    const data = await res.json() as DemoConfigResponse;
+    return data.yaml;
+  };
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -1006,6 +1279,7 @@ function App() {
             username: data.username,
             currentConfig: data.currentConfig,
             quota: data.quota,
+            readiness: data.readiness,
           });
         } else if (!data.currentConfig.trim()) {
           setState({
@@ -1013,6 +1287,7 @@ function App() {
             postId: data.postId,
             subredditName: data.subredditName,
             username: data.username,
+            readiness: data.readiness,
           });
         } else {
           setState({
@@ -1022,6 +1297,7 @@ function App() {
             username: data.username,
             initialConfig: data.currentConfig,
             quota: data.quota,
+            readiness: data.readiness,
           });
         }
       } catch (err) {
@@ -1054,14 +1330,15 @@ function App() {
             username={state.username}
             initialConfig={state.currentConfig}
             initialQuota={state.quota}
+            readiness={state.readiness}
           />
           <PrivacyModal
             subredditName={state.subredditName}
             onAck={() => {
               if (!state.currentConfig.trim()) {
-                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username });
+                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username, readiness: state.readiness });
               } else {
-                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota });
+                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota, readiness: state.readiness });
               }
             }}
           />
@@ -1069,11 +1346,16 @@ function App() {
       )}
       {state.stage === 'template' && (
         <>
-          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} />
+          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} readiness={state.readiness ?? DEFAULT_READINESS} />
           <TemplatePicker
             onSelect={(_, yaml) =>
-              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA })
+              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness })
             }
+            onDemo={() => {
+              void fetchDemoConfig()
+                .then((yaml) => setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness }))
+                .catch(() => showToast({ text: 'Failed to load demo config', appearance: 'neutral' }));
+            }}
           />
         </>
       )}
@@ -1083,6 +1365,7 @@ function App() {
           username={state.username}
           initialConfig={state.initialConfig}
           initialQuota={state.quota}
+          readiness={state.readiness}
         />
       )}
     </>
