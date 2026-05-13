@@ -17,7 +17,7 @@ import type {
   RevisionContentResponse,
   ErrorResponse,
 } from '../../shared/api';
-import { checkQuota, logUsage } from '../core/quota';
+import { checkQuota, logUsage, getQuotaStatus } from '../core/quota';
 import { getCurrent, saveAppend, saveReplace, getRevisions, revertTo, getRevisionContent } from '../core/wiki';
 import { generateRule, explainConfig, conflictCheck, estimateTokens } from '../core/gemini';
 import { getTemplate } from '../core/templates';
@@ -32,10 +32,11 @@ api.get('/init', async (c) => {
   }
 
   try {
-    const [username, privacyRaw, currentConfig] = await Promise.all([
+    const [username, privacyRaw, currentConfig, quota] = await Promise.all([
       reddit.getCurrentUsername(),
       redis.get(`privacy:acked:${subredditName}`),
       getCurrent(subredditName),
+      getQuotaStatus(subredditName),
     ]);
 
     return c.json<InitResponse>({
@@ -45,6 +46,7 @@ api.get('/init', async (c) => {
       username: username ?? 'anonymous',
       privacyAcked: privacyRaw === 'true',
       currentConfig,
+      quota,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';

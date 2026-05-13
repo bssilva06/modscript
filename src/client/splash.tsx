@@ -1,63 +1,77 @@
 import './index.css';
 
-import { navigateTo } from '@devvit/web/client';
-import { context, requestExpandedMode } from '@devvit/web/client';
+import { requestExpandedMode } from '@devvit/web/client';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-export const Splash = () => {
-  return (
-    <div className="flex relative flex-col justify-center items-center min-h-screen gap-4 bg-white dark:bg-gray-900">
-      <img
-        className="object-contain w-1/2 max-w-[250px] mx-auto"
-        src="/snoo.png"
-        alt="Snoo"
-      />
-      <div className="flex flex-col items-center gap-2">
-        <h1 className="text-2xl font-bold text-center text-gray-900 dark:text-white">
-          Hey {context.username ?? 'user'} 👋
-        </h1>
-        <p className="text-base text-center text-gray-600 dark:text-gray-300">
-          Edit{' '}
-          <span className="bg-[#e5ebee] dark:bg-gray-700 px-1 py-0.5 rounded">
-            src/client/splash.tsx
-          </span>{' '}
-          to get started.
-        </p>
+const features = [
+  'Generate rules from plain English',
+  'Explain your existing config',
+  'Audit for conflicts',
+];
+
+export const Splash = () => (
+  <div className="flex flex-col justify-center items-center min-h-screen bg-[#0a0a0e] px-6 relative overflow-hidden">
+    {/* Dot-grid background */}
+    <div
+      className="absolute inset-0 opacity-[0.06]"
+      style={{
+        backgroundImage: 'radial-gradient(circle, #ff4500 1px, transparent 1px)',
+        backgroundSize: '28px 28px',
+      }}
+    />
+
+    {/* Vignette */}
+    <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,#0a0a0e_100%)]" />
+
+    {/* Terminal card */}
+    <div className="relative z-10 w-full max-w-[280px] border border-[#252535]">
+      {/* Fake window chrome */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#252535] bg-[#0d0d12]">
+        <div className="flex gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-[#1e1e28]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#1e1e28]" />
+          <div className="w-2.5 h-2.5 rounded-full bg-[#ff4500]/30 border border-[#ff4500]/20" />
+        </div>
+        <span className="font-mono text-[10px] text-[#2e2e3a] flex-1 text-center select-none">
+          modscript
+        </span>
       </div>
-      <div className="flex items-center justify-center mt-5">
+
+      {/* Body */}
+      <div className="bg-[#0d0d12] p-5">
+        <div className="font-mono text-[10px] text-[#3a3a4a] mb-2 select-none">$ init --tool modscript</div>
+
+        <h1 className="font-mono text-lg font-bold text-[#e8e8f0] tracking-tight leading-none mb-0.5">
+          ModScript
+        </h1>
+        <p className="font-mono text-[11px] text-[#ff4500]/70 mb-5">
+          AI-powered AutoModerator tools
+        </p>
+
+        <div className="space-y-2 mb-6">
+          {features.map((f) => (
+            <div key={f} className="flex items-center gap-2">
+              <span className="text-[#ff4500] font-mono text-xs select-none">▶</span>
+              <span className="font-mono text-[11px] text-[#6a6a7a]">{f}</span>
+            </div>
+          ))}
+        </div>
+
         <button
-          className="flex items-center justify-center bg-[#d93900] dark:bg-orange-600 text-white w-auto h-10 rounded-full cursor-pointer transition-colors px-4 hover:bg-[#c23300] dark:hover:bg-orange-700"
+          className="w-full bg-[#ff4500] hover:bg-[#e03d00] text-white font-mono text-[11px] py-2.5 uppercase tracking-widest transition-colors"
           onClick={(e) => requestExpandedMode(e.nativeEvent, 'game')}
         >
-          Tap to Start
+          open modscript →
         </button>
+
+        <div className="mt-4 font-mono text-[9px] text-[#2a2a35] text-center select-none">
+          mod-only · powered by gemini
+        </div>
       </div>
-      <footer className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3 text-[0.8em] text-gray-600 dark:text-gray-400">
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://developers.reddit.com/docs')}
-        >
-          Docs
-        </button>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://www.reddit.com/r/Devvit')}
-        >
-          r/Devvit
-        </button>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <button
-          className="cursor-pointer hover:text-gray-900 dark:hover:text-white transition-colors"
-          onClick={() => navigateTo('https://discord.com/invite/R7yu2wh9Qz')}
-        >
-          Discord
-        </button>
-      </footer>
     </div>
-  );
-};
+  </div>
+);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

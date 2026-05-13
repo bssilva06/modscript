@@ -1,5 +1,5 @@
 import { redis, settings } from '@devvit/web/server';
-import type { AppMode } from '../../shared/api';
+import type { AppMode, QuotaModeStatus } from '../../shared/api';
 
 type QuotaResult =
   | { allowed: true }
@@ -57,6 +57,25 @@ export async function checkQuota(
   }
 
   return { allowed: true };
+}
+
+export async function getQuotaStatus(
+  subredditName: string
+): Promise<Record<AppMode, QuotaModeStatus>> {
+  const today = todayKey();
+  const [g, e, c] = await Promise.all([
+    redis.get(`quota:${subredditName}:generate:${today}`),
+    redis.get(`quota:${subredditName}:explain:${today}`),
+    redis.get(`quota:${subredditName}:conflict:${today}`),
+  ]);
+  const capG = (await settings.get<number>('quotaGenerate')) ?? defaultCaps.generate;
+  const capE = (await settings.get<number>('quotaExplain'))  ?? defaultCaps.explain;
+  const capC = (await settings.get<number>('quotaConflict')) ?? defaultCaps.conflict;
+  return {
+    generate: { used: Math.min(parseInt(g ?? '0', 10), capG), cap: capG },
+    explain:  { used: Math.min(parseInt(e ?? '0', 10), capE), cap: capE },
+    conflict: { used: Math.min(parseInt(c ?? '0', 10), capC), cap: capC },
+  };
 }
 
 export async function logUsage(

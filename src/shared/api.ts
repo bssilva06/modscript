@@ -1,5 +1,10 @@
 export type AppMode = 'generate' | 'explain' | 'conflict';
 
+export type QuotaModeStatus = {
+  used: number;
+  cap: number;
+};
+
 export type TemplateName = 'general' | 'gaming' | 'support' | 'news' | 'blank';
 
 export type ChatMessage = {
@@ -16,6 +21,7 @@ export type InitResponse = {
   username: string;
   privacyAcked: boolean;
   currentConfig: string;
+  quota: Record<AppMode, QuotaModeStatus>;
 };
 
 export type PrivacyAckResponse = {
