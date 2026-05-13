@@ -85,7 +85,7 @@ Output is framed as **review suggestions** — structural pattern analysis for a
 - **Redis backup before every write** — previous config snapshotted immediately before any wiki update, with the last 5 backups retained per subreddit.
 
 ### Privacy Disclosure
-A one-time modal on first launch per subreddit explains that AutoMod configurations are sent to Google's Gemini API for processing. Acknowledgement is stored in Redis — mods see it once and only once.
+A one-time modal on first launch per moderator per subreddit explains that AutoMod configurations are sent to Google's Gemini API for processing. Acknowledgement is stored in Redis per Reddit username and subreddit, so every moderator sees and accepts the disclosure for themselves.
 
 ### Starter Templates
 On first open, mods choose a subreddit type to pre-load a sensible starting config, or start blank:
@@ -109,11 +109,11 @@ Because the developer's shared Gemini key funds all usage, cost controls are non
 | Control | Behavior |
 |---|---|
 | **Kill switch** | Global `paused` setting — halts all Gemini calls instantly across every subreddit |
-| **Daily quotas** | Generate: 50/day/sub · Explain: 50/day/sub · Conflict Check: 5/day/sub |
+| **Daily quotas** | Generate: 50/day/sub · Explain: 50/day/sub · Conflict Check: 5/day/sub. Quota increments only after a successful Gemini response. |
 | **Max input size** | Configs above ~50K tokens are rejected before any API call is made |
-| **Usage logging** | Token counts and approximate cost written to Redis per subreddit per day |
+| **Usage logging** | Token counts written to Redis per subreddit per day, retained for 48 hours during the hackathon window |
 
-All quotas are tunable via global settings without redeploying.
+All quotas are tunable via global settings without redeploying. For the hackathon submission, the developer-provided shared Gemini key keeps judging friction low; the 48-hour usage log retention is intentionally short and exists only to monitor cost and reliability during the judging period.
 
 ---
 

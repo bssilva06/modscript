@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import './index.css';
 
-import { StrictMode, useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { highlightLine } from './yamlHighlight';
 import { createRoot } from 'react-dom/client';
@@ -99,7 +99,7 @@ const modeLabel: Record<AppMode, string> = {
 
 // --- Shared modal shell ---
 
-function ModalShell({ children, width = 'max-w-md' }: { children: React.ReactNode; width?: string }) {
+function ModalShell({ children, width = 'max-w-md' }: { children: ReactNode; width?: string }) {
   return (
     <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4">
       <div className={`bg-white dark:bg-[#16161e] border border-[#e0e0e0] dark:border-[#252535] w-full ${width} flex flex-col`}>

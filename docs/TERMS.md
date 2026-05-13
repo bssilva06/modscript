@@ -53,7 +53,7 @@ You agree not to use the App to:
 
 ## 7. Quotas, kill switch, and availability
 
-The App enforces per-subreddit-per-mode daily quotas and a global kill switch to keep AI costs bounded. These limits may change without notice. The App may be paused, rate-limited, or made unavailable at any time, with or without notice, for any reason — including cost control, abuse mitigation, infrastructure issues at Reddit or Google, or developer maintenance.
+The App enforces per-subreddit-per-mode daily quotas and a global kill switch to keep AI costs bounded during the hackathon shared-key period. Quotas count successful AI responses. These limits may change without notice. The App may be paused, rate-limited, or made unavailable at any time, with or without notice, for any reason — including cost control, abuse mitigation, infrastructure issues at Reddit or Google, or developer maintenance.
 
 The App is provided **without any service-level agreement (SLA)**. There is no guaranteed uptime, response time, or quota.
 

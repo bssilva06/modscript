@@ -112,7 +112,7 @@ There is no AI-powered AutoMod tool native to the Devvit ecosystem.
 #### F5 — Privacy Disclosure (First Launch)
 - On first open, a one-time modal displays: *"ModScript sends your AutoMod configuration to Google's Gemini API for processing. This may include usernames or community-specific content in your config. Data is handled per [Google's Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms)."*
 - Mod must acknowledge before proceeding
-- Acknowledgement stored in Redis per subreddit so it only appears once
+- Acknowledgement stored in Redis per moderator username and subreddit, so every moderator accepts for themselves
 
 #### F6 — Starter Template Picker (4 templates for MVP)
 - On first open (after privacy disclosure), mod can select their subreddit type or start blank
@@ -125,14 +125,14 @@ There is no AI-powered AutoMod tool native to the Devvit ecosystem.
 
 Because the developer pays for all Gemini usage under the Model A billing model (see §7.3), the following infrastructure is **MVP-required** to bound cost. These are not user-facing features but they ship as part of the hackathon submission.
 
-- **Per-subreddit-per-day quotas in Redis**, separate per mode. Suggested defaults (tunable via global setting):
+- **Per-subreddit-per-day quotas in Redis**, separate per mode. Quotas increment only after successful Gemini responses. Suggested defaults (tunable via global setting):
   - Generate (Pro): **50 calls/day/subreddit**
   - Explain (Flash): **50 calls/day/subreddit**
   - Conflict Check (Pro): **5 calls/day/subreddit**
-  - Implementation: `INCR` on `quota:<subreddit>:<mode>:<YYYYMMDD>` with a 48-hour `EXPIRE`. Reject the call with a friendly toast when the cap is hit.
+  - Implementation: read `quota:<subreddit>:<mode>:<YYYYMMDD>` before the call, reject with a friendly toast when the cap is hit, and `INCR` the key with a 48-hour `EXPIRE` only after a successful AI response.
 - **Global kill switch.** A single global setting (`paused: boolean`) the developer can flip via CLI. Server reads it on every Gemini call and short-circuits with a "temporarily unavailable" message.
 - **Max input token cap.** Configs above ~50K tokens are rejected client-side and server-side with a clear error before any API call is made. Defends against pathological inputs.
-- **Server-side usage logging.** Token counts (input/output, from Gemini's `usageMetadata`) and approximate cost per call are written to Redis keyed by subreddit and day. No UI required for hackathon — this is data for the developer to audit cost and tune quotas.
+- **Server-side usage logging.** Token counts (input/output, from Gemini's `usageMetadata`) are written to Redis keyed by subreddit and day with 48-hour retention. No UI required for hackathon — this short-lived data exists for the developer to audit cost and tune quotas during judging.
 - All four behaviors are bypassed only via developer-side global settings; no per-subreddit override exists in the hackathon build.
 
 ### 4.2 Stretch Features (Ship if Time Allows)
@@ -383,7 +383,7 @@ Reddit's Devvit policy currently approves only **Google Gemini** and **OpenAI/Ch
 
 - **API billing:** The developer (Ben Silva) provides a single Google Gemini API key, stored as a Devvit **global secret** (`isSecret: true`). Set once via `npx devvit settings set geminiApiKey`. It is encrypted by Devvit, never visible in any UI, never returned to the client, never logged. Every install of the app uses this same key — moderators do not enter or manage their own key.
 - **Why Model A:** matches the PRD's primary judging goal (*"Judges can install the app, generate a rule, and save it to a test subreddit without any instructions"*). Zero install friction, zero out-of-band setup, zero client-side credential exposure.
-- **Cost is bounded by F11**, not by the billing model. Per-mode-per-subreddit-per-day quotas, a global pause switch, and a max-input-token cap together cap the developer's worst-case monthly bill. Default quotas (5 Conflict Check / 50 Generate / 50 Explain per sub per day) are tunable via global settings without redeploying.
+- **Cost is bounded by F11**, not by the billing model. Per-mode-per-subreddit-per-day quotas, a global pause switch, and a max-input-token cap together cap the developer's worst-case monthly bill. Default quotas (5 Conflict Check / 50 Generate / 50 Explain per sub per day) are tunable via global settings without redeploying. During the hackathon build, quota counters advance only on successful Gemini responses so judges are not penalized for provider or network failures.
 - **Devvit secrets caveat (informs the design above):** Devvit's "secret" setting type is **global only and CLI-managed only** — moderators cannot store secret values per subreddit. This is why Model A is the only model in which the API key is stored under Devvit's encrypted secrets system. A BYO-key path (Phase 2 in §11) would necessarily use plain subreddit settings, which the docs do not document as encrypted at rest.
 - **Post-hackathon path:** see §11 — Model A is not assumed to be sustainable at scale; it's the right call for the hackathon submission window. Phase 2 adds an opt-in BYO-key escape hatch and Phase 3 considers a Devvit IAP path.
 
@@ -468,7 +468,7 @@ Judges watch the video before they install. Target length: under 3 minutes.
 |---|---|---|
 | Gemini API latency exceeds Devvit's 30-second handler timeout (especially Pro on long Conflict Check inputs) | Medium | F11 max-input-token cap rejects oversized configs before any API call; tune Conflict Check prompt for brevity; if a single call still risks timeout, chunk the analysis into multiple smaller calls. **Streaming UIs are not viable** — handler must complete in 30s regardless. |
 | `generativelanguage.googleapis.com` admin review takes longer than expected and blocks publish | Medium | Submit the domain in `permissions.http` on Week 1 day one with a stub upload (README justification + PP/ToS URLs already in place); check status weekly on `developers.reddit.com/my/apps`; have a fallback message ready if the review window threatens the submission deadline |
-| Cost runaway on developer's shared Gemini key (F11 quotas misbehave or are bypassed) | Medium | Quotas are atomic Redis `INCR` operations; usage is logged server-side per subreddit per day; global `paused` kill switch can stop all calls instantly; review token-usage logs daily during the hackathon window |
+| Cost runaway on developer's shared Gemini key (F11 quotas misbehave or are bypassed) | Medium | Quotas are checked before each AI request and incremented only after successful responses; usage is logged server-side per subreddit per day with 48-hour retention; global `paused` kill switch can stop all calls instantly; review token-usage logs daily during the hackathon window |
 | Gemini API latency makes UI feel slow (within timeout) | Medium | Show typing indicator on every response; pre-render the YAML code panel skeleton |
 | AutoMod wiki write permissions vary by mod | Low | Graceful error message explaining required "Manage Wiki Pages" permission |
 | `runAs: USER` is not supported on `WikiPage.update` | Low | Verify in Week 1 with a single test write; if unsupported, fall back to writing as the app and surface the actor in a toast on save |

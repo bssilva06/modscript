@@ -25,9 +25,9 @@ The App is designed to handle the **minimum** information needed to do its job. 
 **Information stored by the App in Reddit-managed Redis:**
 - A short conversation history per subreddit, so multi-turn refinement works (e.g., "now make that rule case-insensitive").
 - Up to 5 prior versions of your AutoModerator config, captured before each save as a fast-restore safety net. (The canonical version history lives in Reddit's native wiki revisions, not here.)
-- Per-subreddit, per-mode daily request counts, used to enforce daily quotas.
-- Approximate token counts and cost estimates for each call, used internally for cost monitoring.
-- A flag recording that you have acknowledged the privacy disclosure shown on first launch.
+- Per-subreddit, per-mode daily successful request counts, used to enforce daily quotas.
+- Token counts for successful AI calls, used internally for short-term cost and reliability monitoring during the hackathon.
+- A flag recording that you have acknowledged the privacy disclosure shown on first launch, keyed to your Reddit username and the subreddit.
 
 **Information sent to Google (Gemini API):**
 - Your typed prompts and messages.
@@ -46,7 +46,7 @@ The App uses the information described above only to:
 
 1. Answer your AI request in the mode you selected (Generate, Explain, or Conflict Check).
 2. Show you a diff preview before any wiki save and write the change to your subreddit's wiki, attributed to you.
-3. Enforce daily usage quotas and a global kill switch to keep AI costs bounded and prevent abuse.
+3. Enforce daily usage quotas and a global kill switch to keep AI costs bounded and prevent abuse during the hackathon shared-key period.
 4. Recover from accidental writes (the Redis backup of your previous config).
 
 The App does not use your data to train any AI model. The App developer does not sell, rent, or share your data with anyone other than the third-party processor described in section 4.
@@ -67,9 +67,9 @@ The App developer is not a separate data controller for Reddit's underlying infr
 
 - **Conversation history in Redis:** retained on a rolling basis per subreddit; older turns are dropped as the conversation grows.
 - **Config backups in Redis:** capped at the most recent 5 per subreddit; older backups are overwritten.
-- **Quota counters in Redis:** keyed per UTC day with a 48-hour expiry; older counters are deleted automatically.
-- **Usage logs in Redis:** keyed per UTC day; retained for 30 days, then deleted automatically.
-- **Privacy disclosure ack:** retained for the lifetime of the App's installation on your subreddit.
+- **Quota counters in Redis:** keyed per UTC day with a 48-hour expiry; older counters are deleted automatically. Only successful AI calls increment these counters.
+- **Usage logs in Redis:** keyed per UTC day with a 48-hour expiry during the hackathon period; older logs are deleted automatically.
+- **Privacy disclosure ack:** retained for the lifetime of the App's installation on your subreddit, separately for each moderator username.
 - **Wiki revisions:** controlled by Reddit's native wiki revision system, not by the App.
 - **Data sent to Google:** retention is governed by Google's API terms (link in section 4).
 

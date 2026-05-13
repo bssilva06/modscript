@@ -44,11 +44,8 @@ export async function checkQuota(
   // 3. Daily quota
   const cap = (await settings.get<number>(modeSettingKey[mode])) ?? defaultCaps[mode];
   const quotaKey = `quota:${subredditName}:${mode}:${todayKey()}`;
-  const current = await redis.incrBy(quotaKey, 1);
-  if (current === 1) {
-    await redis.expire(quotaKey, 172800); // 48h auto-cleanup
-  }
-  if (current > cap) {
+  const current = parseInt((await redis.get(quotaKey)) ?? '0', 10);
+  if (current >= cap) {
     const label = { conflict: 'Conflict Check', explain: 'Explain', generate: 'Generate' }[mode];
     return {
       allowed: false,
@@ -57,6 +54,14 @@ export async function checkQuota(
   }
 
   return { allowed: true };
+}
+
+export async function incrementQuota(subredditName: string, mode: AppMode): Promise<void> {
+  const quotaKey = `quota:${subredditName}:${mode}:${todayKey()}`;
+  const current = await redis.incrBy(quotaKey, 1);
+  if (current === 1) {
+    await redis.expire(quotaKey, 172800); // 48h auto-cleanup
+  }
 }
 
 export async function getQuotaStatus(

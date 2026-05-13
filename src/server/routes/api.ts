@@ -17,7 +17,7 @@ import type {
   RevisionContentResponse,
   ErrorResponse,
 } from '../../shared/api';
-import { checkQuota, logUsage, getQuotaStatus } from '../core/quota';
+import { checkQuota, incrementQuota, logUsage, getQuotaStatus } from '../core/quota';
 import { getCurrent, saveAppend, saveReplace, getRevisions, revertTo, getRevisionContent } from '../core/wiki';
 import { generateRule, explainConfig, conflictCheck, estimateTokens } from '../core/gemini';
 import { getTemplate } from '../core/templates';
@@ -32,9 +32,9 @@ api.get('/init', async (c) => {
   }
 
   try {
-    const [username, privacyRaw, currentConfig, quota] = await Promise.all([
-      reddit.getCurrentUsername(),
-      redis.get(`privacy:acked:${subredditName}`),
+    const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
+    const [privacyRaw, currentConfig, quota] = await Promise.all([
+      redis.get(`privacy:acked:${subredditName}:${username}`),
       getCurrent(subredditName),
       getQuotaStatus(subredditName),
     ]);
@@ -43,7 +43,7 @@ api.get('/init', async (c) => {
       type: 'init',
       postId,
       subredditName,
-      username: username ?? 'anonymous',
+      username,
       privacyAcked: privacyRaw === 'true',
       currentConfig,
       quota,
@@ -59,7 +59,8 @@ api.post('/privacy-ack', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
-  await redis.set(`privacy:acked:${subredditName}`, 'true');
+  const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
+  await redis.set(`privacy:acked:${subredditName}:${username}`, 'true');
   return c.json<PrivacyAckResponse>({ type: 'privacy-ack', success: true });
 });
 
@@ -79,6 +80,7 @@ api.post('/generate', async (c) => {
 
   try {
     const result = await generateRule(body.currentConfig, body.message, body.history);
+    await incrementQuota(subredditName, 'generate');
     await logUsage(subredditName, 'generate', result.inputTokens, result.outputTokens);
     return c.json<GenerateResponse>({
       type: 'generate',
@@ -107,6 +109,7 @@ api.post('/explain', async (c) => {
 
   try {
     const result = await explainConfig(body.config);
+    await incrementQuota(subredditName, 'explain');
     await logUsage(subredditName, 'explain', result.inputTokens, result.outputTokens);
     return c.json<ExplainResponse>({ type: 'explain', explanation: result.text });
   } catch (error) {
@@ -131,6 +134,7 @@ api.post('/conflict', async (c) => {
 
   try {
     const result = await conflictCheck(body.config);
+    await incrementQuota(subredditName, 'conflict');
     await logUsage(subredditName, 'conflict', result.inputTokens, result.outputTokens);
     return c.json<ConflictResponse>({ type: 'conflict', report: result.text });
   } catch (error) {
