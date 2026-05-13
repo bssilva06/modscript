@@ -24,7 +24,8 @@ function todayKey(): string {
 export async function checkQuota(
   subredditName: string,
   mode: AppMode,
-  inputTokenEstimate: number
+  inputTokenEstimate: number,
+  bypassDailyQuota = false
 ): Promise<QuotaResult> {
   // 1. Kill switch
   const paused = await settings.get<boolean>('paused');
@@ -39,6 +40,10 @@ export async function checkQuota(
       allowed: false,
       reason: `Your AutoModerator config is too large to process (${inputTokenEstimate.toLocaleString()} tokens, limit ${maxTokens.toLocaleString()}). Please reduce the config size.`,
     };
+  }
+
+  if (bypassDailyQuota) {
+    return { allowed: true };
   }
 
   // 3. Daily quota

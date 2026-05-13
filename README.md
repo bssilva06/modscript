@@ -48,11 +48,11 @@ ModScript lives inside Reddit's native mod panel as a Devvit app. Moderators ope
 | Area | Built In |
 |---|---|
 | **AI workflow** | Generate, Explain, Conflict Check |
-| **Save safety** | YAML validation, diff preview, Redis backup, native wiki revision history |
-| **Judge/demo flow** | Local demo config, starter templates, example prompt chips |
+| **Save safety** | YAML validation, verified save re-read, diff preview, undo, Redis backup, native wiki revision history |
+| **Judge/demo flow** | Guided walkthrough, local demo config, expanded starter templates, example prompt chips |
 | **Risk visibility** | Low/Medium/High badge, deterministic safety checklist, false-positive notes |
 | **Permissions** | Wiki readability check and save-permission readiness strip |
-| **Cost controls** | Kill switch, daily quotas, max input size, short-lived usage logs |
+| **Cost controls** | Kill switch, daily quotas, BYO subreddit Gemini keys, max input size, short-lived usage logs |
 
 ### Three Core Modes
 
@@ -90,7 +90,9 @@ Type a plain English description of a rule. ModScript generates valid, formatted
 - **Append-only by default** — generated rules are added to the bottom of your existing config. A 400-line hand-tuned config is never silently overwritten.
 - **Multi-turn refinement** — follow up in the same conversation to adjust scope, conditions, or phrasing.
 - **Example prompt chips** — common starter requests like account-age filters, spam phrases, required flair, suspicious links, and low-karma comments are one click away.
-- **"Why this rule is safe" review** — generated YAML gets a deterministic checklist showing append-only behavior, detected actions, detected trigger fields, false-positive notes, and a test reminder. This does not use an extra AI call.
+- **Generated YAML validation** — generated rules are validated immediately. Valid YAML is appended with a `generated yaml valid` confirmation. Invalid YAML is shown in chat with parser location and is not appended automatically.
+- **Deterministic `action_reason` insertion** — remove, filter, and report rules get a concise local `action_reason` if Gemini omitted one, then the YAML is validated again.
+- **"Why this rule is safe" review** — generated YAML gets a deterministic checklist showing append-only behavior, validation, action reasons, detected actions, detected trigger fields, false-positive notes, and a test reminder. This does not use an extra AI call.
 - **Explicit rewrite mode** — a clearly labeled "Rewrite full config" option is available behind a confirmation dialog. Triggers an automatic Redis backup before any change is made.
 
 ### Explain Mode
@@ -113,10 +115,17 @@ Output is framed as **review suggestions** — structural pattern analysis for a
 - **Readiness check on open** — shows whether the wiki is readable and whether the current moderator has `wiki` or `all` permissions required to save. Generate, Explain, Conflict Check, copy, and demo loading still work without write permission.
 - **YAML validation before save** — every save path validates the final YAML before showing the diff preview, and the server validates again before writing to Reddit's wiki.
 - **Validation status in the editor** — the code panel footer shows `valid yaml`, `invalid yaml`, or `not checked`.
-- **Diff preview before every save** — additions in green, removals in red. No save without explicit confirmation.
+- **Verified saves** — after writing, the server re-reads `config/automoderator` and only returns success when the saved wiki content exactly matches the submitted content.
+- **Undo last save** — the success strip exposes `undo last save`, restoring the latest pre-write Redis backup and verifying the restored wiki content by re-reading.
+- **Diff preview before every save** — additions in green, removals in red. Rule-level review cards summarize added, removed, and changed rules with action, trigger summary, risk level, and `action_reason` status.
 - **Pre-save risk badge** — unsaved changes are labeled Low, Medium, or High based on deterministic checks such as report-only actions, remove/filter actions, regex breadth, author age/karma gates, and full-config rewrites.
 - **Meaningful revision history** — every save writes a human-readable reason string to Reddit's native wiki revision history (e.g., `"ModScript — appended rule: remove posts from accounts under 3 days old"`).
 - **Redis backup before every write** — previous config snapshotted immediately before any wiki update, with the last 5 backups retained per subreddit.
+
+### Deterministic Rule Tester
+Open `Tester` from the code panel to run the current YAML against a sample submission or comment without calling AI. It checks common AutoModerator fields including title, body, body+title, URL/domain, author age, karma thresholds, content type, regex/includes matching, and detectable flair presence.
+
+Tester output is labeled as a **best-effort deterministic check**, not an AutoModerator runtime guarantee. Unsupported conditions are reported instead of failing the test.
 
 ### Privacy Disclosure
 A one-time modal on first launch per moderator per subreddit explains that AutoMod configurations are sent to Google's Gemini API for processing. Acknowledgement is stored in Redis per Reddit username and subreddit, so every moderator sees and accepts the disclosure for themselves.
@@ -133,7 +142,7 @@ On first open, mods choose a subreddit type to pre-load a sensible starting conf
 | **Start blank** | Building from scratch |
 
 ### Demo Config
-For judging, demos, and first-run exploration, ModScript includes a local "Load demo config" option. It loads a realistic multi-rule AutoModerator config into the editor without writing anything to Reddit. The demo config is designed to exercise Generate, Explain, Conflict Check, YAML validation, risk badges, and diff previews.
+For judging, demos, and first-run exploration, ModScript includes a local "Load demo config" option and a guided `Start demo walkthrough` flow. The walkthrough loads the demo config without saving, prefills a recommended Generate prompt, and shows steps for Load demo, Generate, Explain, Conflict, and Preview save.
 
 Demo loading is static and local to the app: no external domain is contacted, no AI call is made, no quota is consumed, and nothing is saved until the moderator explicitly confirms a later wiki save.
 
@@ -154,6 +163,10 @@ Because the developer's shared Gemini key funds all usage, cost controls are non
 
 All quotas are tunable via global settings without redeploying. For the hackathon submission, the developer-provided shared Gemini key keeps judging friction low; the 48-hour usage log retention is intentionally short and exists only to monitor cost and reliability during the judging period.
 
+Subreddits can also configure their own Gemini API key from the in-app key dialog. BYO keys are stored per subreddit in Redis, never returned to the client, and use the same Gemini domain. When a BYO key exists, shared-key daily quotas are bypassed for that subreddit while the pause switch and max input size limit still apply.
+
+Conflict Check also has a disabled-by-default IAP gate stub controlled by global settings (`iapConflictEnabled`, `conflictIapSku`). When enabled without an entitlement implementation, Conflict Check is blocked with purchase copy; by default it is off and does not affect normal usage.
+
 ---
 
 ## Safety Guarantees
@@ -162,7 +175,9 @@ All quotas are tunable via global settings without redeploying. For the hackatho
 
 - **Append is always the default.** A 400-line config is never silently rewritten.
 - **Invalid YAML is blocked before write.** Client-side validation stops bad YAML before the diff preview, and server-side validation prevents bypassing the UI.
-- **Diff preview is mandatory.** Every save shows exactly what will change before committing.
+- **Diff preview is mandatory.** Every save shows exactly what will change before committing, including rule review cards above the raw line diff.
+- **Saves are verified.** A save is only considered successful after the server re-reads Reddit's wiki and confirms the content matches.
+- **Undo is verified.** The latest Redis backup can be restored through the UI and is also verified by re-reading the wiki.
 - **Risk is visible before save.** The editor and diff modal show Low/Medium/High risk with concise reasons so moderators can spot broad removals, broad regexes, or full rewrites before committing.
 - **Save permission is explicit.** The app checks moderator permissions and disables wiki writes when `wiki` or `all` permission is missing.
 - **Redis backup before every write.** Fast-restore snapshot taken immediately before each wiki update.
@@ -311,7 +326,7 @@ Based on a review of the Devvit App Directory and Devvit community, no AI-native
 
 No other external domains are contacted. All Reddit API calls and Redis operations use Devvit's built-in server SDKs (`@devvit/web/server`), which do not count as external HTTP.
 
-**API key:** The Gemini key is a developer-provided global secret (`isSecret: true` in `devvit.json`), set once via `npx devvit settings set geminiApiKey`. It is encrypted by Devvit, never returned to the client, never logged, and never visible in any UI. Moderators who install the app do not enter or manage any key.
+**API key:** The Gemini key can be the developer-provided global secret (`isSecret: true` in `devvit.json`) or a per-subreddit BYO key saved by moderators in the app. Keys are never returned to the client or logged. BYO keys are stored in Redis under a subreddit-scoped key and used only for that subreddit.
 
 ---
 
@@ -348,14 +363,12 @@ npm run dev          # devvit playtest — live development on a test subreddit
 ## Post-Hackathon Roadmap
 
 **Phase 2 — BYO-Key Escape Hatch**
-Subreddits with heavy usage can supply their own Gemini API key per subreddit. When present, F11 quotas are bypassed for that subreddit. Reduces developer cost without a payment system.
+Implemented as a subreddit-scoped Redis setting in the app. When present, shared-key daily quotas are bypassed for that subreddit while the kill switch and max input size still apply.
 
 **Phase 3 — Devvit IAP for Conflict Check**
-If adoption warrants it, gate Conflict Check (the dominant cost driver: long input + Pro model + reasoning) behind an optional Devvit In-App Purchase, while keeping Generate and Explain free with quotas.
+Implemented as a disabled-by-default feature gate stub with configurable SKU. A real entitlement check can replace the helper when Devvit payment wiring is finalized.
 
 **Stretch Features (not in current build)**
-- Extended template library (Finance, NSFW, Meme, AMA, Sports)
-- Rule Tester / Sandbox — simulate which rules fire on a sample post
 - Shareable rule snippets — export individual rules for cross-community sharing
 
 ---

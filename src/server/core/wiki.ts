@@ -14,6 +14,10 @@ function backupIndexKey(subredditName: string): string {
   return `automod:backup-index:${subredditName}`;
 }
 
+export function wikiPermissionHelp(): string {
+  return 'Manage Wiki Pages permission required. Ask a moderator with Everything or Wiki permissions to grant it.';
+}
+
 export async function getCurrent(subredditName: string): Promise<string> {
   const result = await getCurrentWithStatus(subredditName);
   return result.content;
@@ -50,11 +54,24 @@ async function backupCurrent(subredditName: string, content: string): Promise<vo
   }
 }
 
+export async function hasLastBackup(subredditName: string): Promise<boolean> {
+  const latest = await redis.zRange(backupIndexKey(subredditName), -1, -1, { by: 'rank' });
+  return latest.length > 0;
+}
+
+export async function getLatestBackup(subredditName: string): Promise<string | null> {
+  const latest = await redis.zRange(backupIndexKey(subredditName), -1, -1, { by: 'rank' });
+  const first = latest[0];
+  const backupKey = typeof first === 'string' ? first : first?.member;
+  if (!backupKey) return null;
+  return (await redis.get(backupKey)) ?? null;
+}
+
 export async function saveAppend(
   subredditName: string,
   newYaml: string,
   summary: string
-): Promise<void> {
+): Promise<string> {
   const current = await getCurrent(subredditName);
   await backupCurrent(subredditName, current);
 
@@ -63,18 +80,37 @@ export async function saveAppend(
   const reason = `ModScript - appended rule: ${summary}`;
 
   await reddit.updateWikiPage({ subredditName, page: WIKI_PAGE, content: combined, reason });
+  return combined;
 }
 
 export async function saveReplace(
   subredditName: string,
   newYaml: string,
   summary: string
-): Promise<void> {
+): Promise<string> {
   const current = await getCurrent(subredditName);
   await backupCurrent(subredditName, current);
 
   const reason = `ModScript - replaced full config: ${summary}`;
   await reddit.updateWikiPage({ subredditName, page: WIKI_PAGE, content: newYaml, reason });
+  return newYaml;
+}
+
+export async function restoreLatestBackup(subredditName: string): Promise<string> {
+  const backup = await getLatestBackup(subredditName);
+  if (backup === null) {
+    throw new Error('No ModScript backup is available to undo.');
+  }
+
+  const current = await getCurrent(subredditName);
+  await backupCurrent(subredditName, current);
+  await reddit.updateWikiPage({
+    subredditName,
+    page: WIKI_PAGE,
+    content: backup,
+    reason: 'ModScript - undo last save',
+  });
+  return backup;
 }
 
 export async function getRevisions(subredditName: string): Promise<WikiRevision[]> {

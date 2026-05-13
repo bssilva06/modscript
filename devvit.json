@@ -42,6 +42,16 @@
         "type": "number",
         "label": "Max input tokens per call",
         "defaultValue": 50000
+      },
+      "iapConflictEnabled": {
+        "type": "boolean",
+        "label": "Enable Conflict Check IAP gate",
+        "defaultValue": false
+      },
+      "conflictIapSku": {
+        "type": "string",
+        "label": "Conflict Check IAP SKU",
+        "defaultValue": "conflict_check"
       }
     }
   },

@@ -1,4 +1,3 @@
-import { settings } from '@devvit/web/server';
 import type { AppMode, ChatMessage } from '../../shared/api';
 
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -150,7 +149,8 @@ You are in GENERATE mode. The user will describe a moderation rule in plain Engl
 Respond with:
 1. A brief plain-English confirmation of what rule you're adding (1–2 sentences).
 2. The YAML block(s) to append, delimited by \`\`\`yaml and \`\`\`. Output ONLY the new rules to append, not the entire existing config.
-Rules are APPEND-ONLY by default. Never rewrite the existing config unless the user explicitly says "rewrite" or "replace the whole config".`;
+Rules are APPEND-ONLY by default. Never rewrite the existing config unless the user explicitly says "rewrite" or "replace the whole config".
+Always include a concise action_reason on every remove, filter, or report rule.`;
   }
 
   if (mode === 'explain') {
@@ -178,11 +178,11 @@ Begin your response with: "ModScript Conflict Check — Review Suggestions"`;
 export async function generateRule(
   currentConfig: string,
   userMessage: string,
-  history: ChatMessage[]
+  history: ChatMessage[],
+  apiKey: string
 ): Promise<GeminiResponse> {
   if (USE_MOCK) return MOCK_GENERATE;
 
-  const apiKey = (await settings.get('geminiApiKey')) as string;
   const systemPrompt = buildSystemPrompt('generate', currentConfig);
 
   const contents: GeminiContent[] = [
@@ -203,10 +203,9 @@ export async function generateRule(
   return { yaml, text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
 }
 
-export async function explainConfig(currentConfig: string): Promise<GeminiResponse> {
+export async function explainConfig(currentConfig: string, apiKey: string): Promise<GeminiResponse> {
   if (USE_MOCK) return MOCK_EXPLAIN;
 
-  const apiKey = (await settings.get('geminiApiKey')) as string;
   const systemPrompt = buildSystemPrompt('explain', currentConfig);
   const contents: GeminiContent[] = [
     { role: 'user', parts: [{ text: 'Please explain my AutoModerator config.' }] },
@@ -216,10 +215,9 @@ export async function explainConfig(currentConfig: string): Promise<GeminiRespon
   return { text: result.text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
 }
 
-export async function conflictCheck(currentConfig: string): Promise<GeminiResponse> {
+export async function conflictCheck(currentConfig: string, apiKey: string): Promise<GeminiResponse> {
   if (USE_MOCK) return MOCK_CONFLICT;
 
-  const apiKey = (await settings.get('geminiApiKey')) as string;
   const systemPrompt = buildSystemPrompt('conflict', currentConfig);
   const contents: GeminiContent[] = [
     { role: 'user', parts: [{ text: 'Please check my AutoModerator config for conflicts and issues.' }] },

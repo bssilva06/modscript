@@ -164,7 +164,170 @@ action_reason: "Post locked pending mod review — possible repost from low-hist
 `,
 };
 
-export const TEMPLATES: Template[] = [GENERAL, GAMING, SUPPORT, NEWS];
+const FINANCE: Template = {
+  id: 'finance',
+  label: 'Finance',
+  description: 'Pump-and-dump phrases, referral spam, and new-account reporting.',
+  yaml: `---
+# Report common pump phrases
+type: submission+comment
+body+title (includes, any, case-insensitive):
+  - "guaranteed returns"
+  - "100x"
+  - "risk free"
+  - "next moonshot"
+action: report
+action_reason: "Possible financial promotion or pump language."
+---
+# Remove referral spam
+type: submission+comment
+body+title (includes, any, case-insensitive):
+  - "use my referral"
+  - "ref code"
+  - "signup bonus"
+action: remove
+action_reason: "Referral spam is not allowed."
+`,
+};
+
+const NSFW: Template = {
+  id: 'nsfw',
+  label: 'NSFW',
+  description: 'Flair enforcement, consent keyword reporting, and new-account gates.',
+  yaml: `---
+# Require flair on NSFW submissions
+type: submission
+is_flair_text: ""
+action: remove
+action_reason: "Please select the required post flair before submitting."
+---
+# Report consent-risk phrases
+type: submission+comment
+body+title (includes, any, case-insensitive):
+  - "leaked"
+  - "without consent"
+  - "revenge"
+action: report
+action_reason: "Possible consent or safety issue requiring moderator review."
+---
+# Remove brand-new account posts
+type: submission
+author:
+  account_age: < 2 days
+action: remove
+action_reason: "New accounts cannot post here yet."
+`,
+};
+
+const MEME: Template = {
+  id: 'meme',
+  label: 'Meme',
+  description: 'Low-effort title reporting, flair requirements, and repost guardrails.',
+  yaml: `---
+# Require meme category flair
+type: submission
+is_flair_text: ""
+action: remove
+action_reason: "Please choose a meme category flair."
+---
+# Report very low-effort titles
+type: submission
+title (regex): "(?i)^(lol|lmao|this|same|title)$"
+action: report
+action_reason: "Possible low-effort title."
+---
+# Filter new low-karma accounts
+type: submission
+author:
+  account_age: < 3 days
+  combined_karma: < 25
+action: filter
+action_reason: "New low-karma account filtered for review."
+`,
+};
+
+const AMA: Template = {
+  id: 'ama',
+  label: 'AMA',
+  description: 'AMA flair requirements and moderator review for impersonation risks.',
+  yaml: `---
+# Report AMA posts without verification language
+type: submission
+title (includes, any, case-insensitive):
+  - "AMA"
+  - "Ask me anything"
+action: report
+action_reason: "AMA post needs verification review."
+---
+# Remove new-account AMA attempts
+type: submission
+title (includes, any, case-insensitive):
+  - "AMA"
+  - "Ask me anything"
+author:
+  account_age: < 14 days
+action: remove
+action_reason: "AMA posts require an established account."
+`,
+};
+
+const SPORTS: Template = {
+  id: 'sports',
+  label: 'Sports',
+  description: 'Game-thread noise controls, spoilers, and ticket spam reporting.',
+  yaml: `---
+# Report ticket sales
+type: submission+comment
+body+title (includes, any, case-insensitive):
+  - "selling tickets"
+  - "ticket for sale"
+  - "dm for tickets"
+action: report
+action_reason: "Possible ticket sale or scam."
+---
+# Remove spoiler titles
+type: submission
+title (includes, any, case-insensitive):
+  - "spoiler"
+  - "final score"
+action: filter
+action_reason: "Possible spoiler title filtered for review."
+`,
+};
+
+const LOCAL: Template = {
+  id: 'local',
+  label: 'Local / City',
+  description: 'Moving posts, lost-and-found reports, local sales, and flair requirements.',
+  yaml: `---
+# Require city-topic flair
+type: submission
+is_flair_text: ""
+action: remove
+action_reason: "Please choose a local topic flair before posting."
+---
+# Report lost-and-found posts
+type: submission
+body+title (includes, any, case-insensitive):
+  - "lost dog"
+  - "lost cat"
+  - "found wallet"
+  - "missing person"
+action: report
+action_reason: "Local safety or lost-and-found post needs moderator visibility."
+---
+# Remove common moving spam
+type: submission+comment
+body+title (includes, any, case-insensitive):
+  - "cheap movers"
+  - "moving company"
+  - "junk removal"
+action: remove
+action_reason: "Local service spam is not allowed."
+`,
+};
+
+export const TEMPLATES: Template[] = [GENERAL, GAMING, SUPPORT, NEWS, FINANCE, NSFW, MEME, AMA, SPORTS, LOCAL];
 
 export const getTemplate = (id: TemplateName): Template | undefined =>
   TEMPLATES.find((t) => t.id === id);

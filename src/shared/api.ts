@@ -5,7 +5,18 @@ export type QuotaModeStatus = {
   cap: number;
 };
 
-export type TemplateName = 'general' | 'gaming' | 'support' | 'news' | 'blank';
+export type TemplateName =
+  | 'general'
+  | 'gaming'
+  | 'support'
+  | 'news'
+  | 'finance'
+  | 'nsfw'
+  | 'meme'
+  | 'ama'
+  | 'sports'
+  | 'local'
+  | 'blank';
 
 export type ChatMessage = {
   role: 'user' | 'assistant';
@@ -28,6 +39,13 @@ export type InitResponse = {
     modPermissions: string[];
     message?: string;
   };
+  byoKeyConfigured: boolean;
+  conflictGate?: {
+    enabled: boolean;
+    hasAccess: boolean;
+    sku?: string;
+  };
+  lastBackupAvailable?: boolean;
 };
 
 export type PrivacyAckResponse = {
@@ -74,6 +92,18 @@ export type SaveRequest = {
 export type SaveResponse = {
   type: 'save';
   success: boolean;
+  verified: boolean;
+  savedContent: string;
+  message?: string;
+  timestamp: number;
+};
+
+export type UndoLastSaveResponse = {
+  type: 'undo-last-save';
+  success: boolean;
+  verified: boolean;
+  restoredContent: string;
+  message?: string;
 };
 
 export type ValidateYamlRequest = {
@@ -91,6 +121,58 @@ export type ValidateYamlResponse = {
 export type DemoConfigResponse = {
   type: 'demo-config';
   yaml: string;
+};
+
+export type RuleTestContentType = 'submission' | 'comment' | 'any';
+
+export type RuleTestRequest = {
+  config: string;
+  sample: {
+    type: RuleTestContentType;
+    title: string;
+    body: string;
+    url: string;
+    domain: string;
+    authorAgeDays: number;
+    combinedKarma: number;
+    commentKarma: number;
+    linkKarma: number;
+    flairText: string;
+  };
+};
+
+export type RuleTestResult = {
+  index: number;
+  name: string;
+  action: string;
+  matched: boolean;
+  matchedConditions: string[];
+  unsupportedConditions: string[];
+};
+
+export type RuleTestResponse = {
+  type: 'test-rules';
+  results: RuleTestResult[];
+  summary: {
+    matched: number;
+    notMatched: number;
+    unsupported: number;
+  };
+  note: string;
+};
+
+export type ByoKeyStatusResponse = {
+  type: 'byo-key-status';
+  configured: boolean;
+};
+
+export type SetByoKeyRequest = {
+  apiKey: string;
+};
+
+export type SetByoKeyResponse = {
+  type: 'set-byo-key';
+  configured: boolean;
 };
 
 export type ErrorResponse = {

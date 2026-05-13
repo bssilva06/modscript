@@ -22,6 +22,11 @@ import type {
   QuotaModeStatus,
   ValidateYamlResponse,
   DemoConfigResponse,
+  SaveResponse,
+  UndoLastSaveResponse,
+  RuleTestResponse,
+  RuleTestContentType,
+  SetByoKeyResponse,
 } from '../shared/api';
 
 // --- Types ---
@@ -33,6 +38,9 @@ type SafetyReview = { action: string; triggers: string[]; notes: string[] };
 type RiskLevel = 'Low' | 'Medium' | 'High';
 type RiskAnalysis = { level: RiskLevel; reasons: string[] };
 type ClientChatMessage = ChatMessage & { safetyReview?: SafetyReview };
+type PendingSave = { appendMode: boolean; contentToSave: string };
+type LastVerifiedSave = { timestamp: number; verified: boolean } | null;
+type RuleReviewCard = { name: string; action: string; triggerSummary: string; risk: RiskAnalysis; hasActionReason: boolean; status: 'added' | 'removed' | 'changed' };
 
 const DEFAULT_QUOTA: QuotaState = {
   generate: { used: 0, cap: 50 },
@@ -47,11 +55,13 @@ const DEFAULT_READINESS: ReadinessState = {
   message: 'Readiness not checked',
 };
 
+const WIKI_PERMISSION_HELP = 'Manage Wiki Pages permission required. Ask a moderator with Everything or Wiki permissions to grant it.';
+
 type AppState =
   | { stage: 'loading' }
-  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState }
-  | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState }
-  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState };
+  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean }
+  | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean }
+  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean };
 
 type DiffLine = { kind: 'same' | 'added' | 'removed'; text: string };
 
@@ -108,6 +118,7 @@ function buildSafetyReview(yaml: string): SafetyReview {
   const primaryAction = actions[0] ?? 'none detected';
   const notes = [
     'Append-only change; existing rules are kept until you choose replace all.',
+    /^\s*action_reason:/im.test(yaml) ? 'action_reason present on generated rule.' : 'action_reason missing on generated rule.',
     `Detected action: ${actions.length > 0 ? actions.join(', ') : 'none'}.`,
     `Detected trigger fields: ${triggers.length > 0 ? triggers.join(', ') : 'none'}.`,
   ];
@@ -171,6 +182,68 @@ function validationLabel(validation: YamlValidationState): string {
   return 'not checked';
 }
 
+function buildPendingSave(workingConfig: string, savedConfig: string): PendingSave {
+  if (workingConfig.startsWith(savedConfig)) {
+    return {
+      appendMode: true,
+      contentToSave: workingConfig.slice(savedConfig.length).replace(/^\n/, ''),
+    };
+  }
+
+  return {
+    appendMode: false,
+    contentToSave: workingConfig,
+  };
+}
+
+function ruleBlocks(config: string): string[] {
+  return config
+    .split(/^---\s*$/m)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+function ensureActionReasons(yaml: string): string {
+  return ruleBlocks(yaml)
+    .map((block) => {
+      const action = block.match(/^\s*action:\s*["']?([a-z_]+)/im)?.[1]?.toLowerCase();
+      if (!action || !['remove', 'filter', 'report'].includes(action) || /^\s*action_reason:/im.test(block)) {
+        return block;
+      }
+      const triggers = detectTriggers(block);
+      const reason = `${action} by ModScript${triggers.length > 0 ? ` for ${triggers.slice(0, 3).join(', ')}` : ''}.`;
+      return `${block}\naction_reason: "${reason}"`;
+    })
+    .map((block, index) => (index === 0 ? `---\n${block}` : `---\n${block}`))
+    .join('\n');
+}
+
+function buildRuleReviewCards(oldContent: string, newContent: string, appendMode: boolean): RuleReviewCard[] {
+  const before = appendMode ? [] : ruleBlocks(oldContent);
+  const after = ruleBlocks(appendMode ? newContent : newContent);
+  const max = Math.max(before.length, after.length);
+  const cards: RuleReviewCard[] = [];
+
+  for (let index = 0; index < max; index++) {
+    const oldBlock = before[index];
+    const newBlock = after[index];
+    if (oldBlock === newBlock) continue;
+    const source = newBlock ?? oldBlock ?? '';
+    const action = detectActions(source)[0] ?? 'none';
+    const triggers = detectTriggers(source);
+    cards.push({
+      name: `Rule ${index + 1}`,
+      action,
+      triggerSummary: triggers.length > 0 ? triggers.join(', ') : 'no supported triggers detected',
+      risk: analyzeRisk(source, false),
+      hasActionReason: /^\s*action_reason:/im.test(source),
+      status: newBlock && oldBlock ? 'changed' : newBlock ? 'added' : 'removed',
+    });
+  }
+
+  return cards;
+}
+
 // --- Design tokens ---
 
 const modeAccentBorder: Record<AppMode, string> = {
@@ -219,9 +292,15 @@ function RiskBadge({ analysis }: { analysis: RiskAnalysis }) {
 }
 
 function SafetyPanel({ review }: { review: SafetyReview }) {
+  const hasReason = review.notes.some((note) => note.toLowerCase().includes('action_reason'));
   return (
     <div className="mt-1 bg-[#fdfdfd] dark:bg-[#111118] border border-[#e8e8e8] dark:border-[#252535] px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-[#777] max-w-[86%]">
       <div className="uppercase tracking-widest text-[#ff4500] mb-1">why this rule is safe</div>
+      <div className="mb-1 flex flex-wrap gap-1.5">
+        <span>action: {review.action}</span>
+        <span>triggers: {review.triggers.length > 0 ? review.triggers.join(', ') : 'none'}</span>
+        <span className={hasReason ? 'text-emerald-500' : 'text-amber-500'}>{hasReason ? 'action_reason present' : 'action_reason missing'}</span>
+      </div>
       <div className="space-y-0.5">
         {review.notes.map((note) => (
           <div key={note} className="flex gap-1.5">
@@ -238,7 +317,7 @@ function ReadinessStrip({ readiness }: { readiness: ReadinessState }) {
   return (
     <div className="px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-[#fafafa] dark:bg-[#101016] font-mono text-[10px] text-[#777] dark:text-[#666] flex items-center gap-3">
       <span>wiki readable: <span className={readiness.wikiReadable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiReadable ? 'yes' : 'no'}</span></span>
-      <span>save permission: <span className={readiness.wikiWritable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiWritable ? 'ready' : 'blocked'}</span></span>
+      <span title={!readiness.wikiWritable ? WIKI_PERMISSION_HELP : undefined}>save permission: <span className={readiness.wikiWritable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiWritable ? 'ready' : 'blocked'}</span></span>
       <span className="truncate">perms: {readiness.modPermissions.length > 0 ? readiness.modPermissions.join(', ') : 'none'}</span>
       {readiness.message && <span className="truncate text-amber-500">{readiness.message}</span>}
     </div>
@@ -300,6 +379,12 @@ const TEMPLATE_OPTIONS: { id: TemplateName; label: string; description: string }
   { id: 'gaming', label: 'Gaming', description: 'Flair requirements, low-effort title filter, and spam guards.' },
   { id: 'support', label: 'Support / Mental Health', description: 'Crisis-keyword alerting and anti-minimization rules.' },
   { id: 'news', label: 'News', description: 'Source attribution enforcement, link-karma gates, and auto-flair.' },
+  { id: 'finance', label: 'Finance', description: 'Referral spam and pump-language review rules.' },
+  { id: 'nsfw', label: 'NSFW', description: 'Flair enforcement and consent-risk review patterns.' },
+  { id: 'meme', label: 'Meme', description: 'Low-effort title checks, flair, and repost guardrails.' },
+  { id: 'ama', label: 'AMA', description: 'Verification review and impersonation-risk checks.' },
+  { id: 'sports', label: 'Sports', description: 'Ticket spam, spoiler filtering, and game-thread controls.' },
+  { id: 'local', label: 'Local / City', description: 'City flair, lost-and-found review, and local spam filters.' },
   { id: 'blank', label: 'Start blank', description: 'No starter rules — build from scratch.' },
 ];
 
@@ -390,8 +475,13 @@ function DiffPreviewModal({
   saving: boolean;
   risk: RiskAnalysis;
 }) {
-  const diff = computeDiff(oldContent, appendMode ? oldContent + newContent : newContent);
+  const separator = oldContent.trimEnd().length > 0 && newContent.trim().length > 0 ? '\n' : '';
+  const diff = computeDiff(oldContent, appendMode ? oldContent.trimEnd() + separator + newContent : newContent);
   const changes = diff.filter((l) => l.kind !== 'same').length;
+  const ruleCards = buildRuleReviewCards(oldContent, newContent, appendMode);
+  const added = ruleCards.filter((card) => card.status === 'added').length;
+  const removed = ruleCards.filter((card) => card.status === 'removed').length;
+  const changed = ruleCards.filter((card) => card.status === 'changed').length;
 
   return (
     <ModalShell width="max-w-2xl">
@@ -405,6 +495,9 @@ function DiffPreviewModal({
             <RiskBadge analysis={risk} />
             <span className="text-[10px] font-mono text-[#888]">{risk.reasons.join(' / ')}</span>
           </div>
+          <div className="mt-1 text-[10px] font-mono text-[#888]">
+            rules: {added} added / {removed} removed / {changed} changed
+          </div>
         </div>
         <button
           onClick={onCancel}
@@ -416,6 +509,23 @@ function DiffPreviewModal({
       {!appendMode && (
         <div className="mx-5 mt-4 px-3 py-2 border border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400 text-xs font-mono">
           ⚠ This will replace your entire AutoModerator config.
+        </div>
+      )}
+      {ruleCards.length > 0 && (
+        <div className="mx-5 mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-auto">
+          {ruleCards.map((card) => (
+            <div key={`${card.name}-${card.status}`} className="border border-[#e0e0e0] dark:border-[#252535] p-2 font-mono text-[10px]">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-gray-700 dark:text-[#c8c8d8]">{card.name} · {card.status}</span>
+                <RiskBadge analysis={card.risk} />
+              </div>
+              <div className="text-[#888]">action: {card.action}</div>
+              <div className="text-[#888]">triggers: {card.triggerSummary}</div>
+              <div className={card.hasActionReason ? 'text-emerald-500' : 'text-amber-500'}>
+                {card.hasActionReason ? 'action_reason present' : 'action_reason missing'}
+              </div>
+            </div>
+          ))}
         </div>
       )}
       <div className="mx-5 my-4 flex-1 overflow-auto font-mono text-xs bg-[#0a0a0e] border border-[#1e1e28] max-h-[50vh]">
@@ -618,6 +728,168 @@ function VersionHistoryModal({
   );
 }
 
+function RuleTesterModal({
+  config,
+  onClose,
+}: {
+  config: string;
+  onClose: () => void;
+}) {
+  const [sampleType, setSampleType] = useState<RuleTestContentType>('submission');
+  const [title, setTitle] = useState('Example post title');
+  const [body, setBody] = useState('Example body text');
+  const [url, setUrl] = useState('');
+  const [domain, setDomain] = useState('');
+  const [authorAgeDays, setAuthorAgeDays] = useState(7);
+  const [combinedKarma, setCombinedKarma] = useState(10);
+  const [commentKarma, setCommentKarma] = useState(5);
+  const [linkKarma, setLinkKarma] = useState(5);
+  const [flairText, setFlairText] = useState('');
+  const [result, setResult] = useState<RuleTestResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const runTest = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/test-rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config,
+          sample: { type: sampleType, title, body, url, domain, authorAgeDays, combinedKarma, commentKarma, linkKarma, flairText },
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json() as ErrorResponse;
+        showToast({ text: err.message, appearance: 'neutral' });
+        return;
+      }
+      setResult(await res.json() as RuleTestResponse);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputClass = 'bg-[#f5f5f5] dark:bg-[#0d0d12] border border-[#ddd] dark:border-[#252530] text-xs font-mono p-2 text-gray-900 dark:text-[#d0d0d8]';
+
+  return (
+    <ModalShell width="max-w-3xl">
+      <div className="px-5 pt-5 pb-4 border-b border-[#e0e0e0] dark:border-[#252535] flex items-center justify-between">
+        <div>
+          <div className="text-[10px] font-mono text-[#888] uppercase tracking-widest mb-1">tester</div>
+          <h2 className="text-base font-mono font-bold text-gray-900 dark:text-[#e0e0e8]">Best-effort deterministic check</h2>
+        </div>
+        <button onClick={onClose} className="font-mono text-xs text-[#888] hover:text-gray-900 dark:hover:text-[#e0e0e8]">close</button>
+      </div>
+      <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[70vh] overflow-auto">
+        <div className="grid grid-cols-2 gap-2">
+          <select value={sampleType} onChange={(e) => setSampleType(e.target.value as RuleTestContentType)} className={inputClass}>
+            <option value="submission">submission</option>
+            <option value="comment">comment</option>
+            <option value="any">any</option>
+          </select>
+          <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="domain" className={inputClass} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="title" className={`${inputClass} col-span-2`} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="body" rows={3} className={`${inputClass} col-span-2 resize-none`} />
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="url" className={`${inputClass} col-span-2`} />
+          <input type="number" value={authorAgeDays} onChange={(e) => setAuthorAgeDays(Number(e.target.value))} placeholder="age days" className={inputClass} />
+          <input type="number" value={combinedKarma} onChange={(e) => setCombinedKarma(Number(e.target.value))} placeholder="combined karma" className={inputClass} />
+          <input type="number" value={commentKarma} onChange={(e) => setCommentKarma(Number(e.target.value))} placeholder="comment karma" className={inputClass} />
+          <input type="number" value={linkKarma} onChange={(e) => setLinkKarma(Number(e.target.value))} placeholder="link karma" className={inputClass} />
+          <input value={flairText} onChange={(e) => setFlairText(e.target.value)} placeholder="flair text" className={`${inputClass} col-span-2`} />
+          <button onClick={() => void runTest()} disabled={loading} className="col-span-2 bg-[#ff4500] hover:bg-[#e03d00] text-white text-xs font-mono py-2 uppercase tracking-wider disabled:opacity-50">
+            {loading ? 'testing...' : 'run test'}
+          </button>
+        </div>
+        <div className="font-mono text-xs">
+          {!result ? (
+            <div className="text-[#888]">Run a sample against the current editor contents. This does not call AI.</div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-[#888]">{result.note}</div>
+              <div className="text-[#888]">matched: {result.summary.matched} / not matched: {result.summary.notMatched} / unsupported: {result.summary.unsupported}</div>
+              {result.results.map((item) => (
+                <div key={item.index} className="border border-[#e0e0e0] dark:border-[#252535] p-2">
+                  <div className={item.matched ? 'text-emerald-500' : 'text-[#888]'}>
+                    {item.name}: {item.matched ? 'matched' : 'no match'} · action {item.action}
+                  </div>
+                  {item.matchedConditions.length > 0 && <div className="text-[#888] mt-1">matched: {item.matchedConditions.join('; ')}</div>}
+                  {item.unsupportedConditions.length > 0 && <div className="text-amber-500 mt-1">unsupported: {item.unsupportedConditions.join(', ')}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ByoKeyModal({
+  configured,
+  onClose,
+  onConfigured,
+}: {
+  configured: boolean;
+  onClose: () => void;
+  onConfigured: (configured: boolean) => void;
+}) {
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const saveKey = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/byo-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey }),
+      });
+      if (!res.ok) {
+        const err = await res.json() as ErrorResponse;
+        showToast({ text: err.message, appearance: 'neutral' });
+        return;
+      }
+      const data = await res.json() as SetByoKeyResponse;
+      onConfigured(data.configured);
+      showToast({ text: 'BYO Gemini key saved', appearance: 'success' });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeKey = async () => {
+    setSaving(true);
+    try {
+      await fetch('/api/byo-key', { method: 'DELETE' });
+      onConfigured(false);
+      showToast({ text: 'BYO Gemini key removed', appearance: 'success' });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell width="max-w-md">
+      <div className="px-5 pt-5 pb-4 border-b border-[#e0e0e0] dark:border-[#252535]">
+        <div className="text-[10px] font-mono text-[#888] uppercase tracking-widest mb-1">gemini key</div>
+        <h2 className="text-base font-mono font-bold text-gray-900 dark:text-[#e0e0e8]">Subreddit BYO key</h2>
+      </div>
+      <div className="p-5 space-y-3">
+        <p className="text-xs text-gray-500 dark:text-[#888]">Stored in Redis for this subreddit. The key is never returned to the client. BYO keys bypass shared daily AI quotas but still use the input-size limit and pause switch.</p>
+        <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={configured ? 'key configured' : 'paste Gemini API key'} className="w-full bg-[#f5f5f5] dark:bg-[#0d0d12] border border-[#ddd] dark:border-[#252530] text-xs font-mono p-2 text-gray-900 dark:text-[#d0d0d8]" />
+      </div>
+      <div className="px-5 pb-5 flex justify-end gap-2">
+        {configured && <button onClick={() => void removeKey()} disabled={saving} className="px-3 py-2 border border-red-500/40 text-red-500 text-xs font-mono">remove</button>}
+        <button onClick={onClose} disabled={saving} className="px-3 py-2 border border-[#e0e0e0] dark:border-[#252535] text-xs font-mono text-[#888]">cancel</button>
+        <button onClick={() => void saveKey()} disabled={saving || !apiKey.trim()} className="px-3 py-2 bg-[#ff4500] text-white text-xs font-mono disabled:opacity-50">save key</button>
+      </div>
+    </ModalShell>
+  );
+}
+
 // --- Main app ---
 
 function MainApp({
@@ -626,12 +898,18 @@ function MainApp({
   initialConfig,
   initialQuota,
   readiness,
+  initialByoKeyConfigured,
+  conflictGate,
+  initialLastBackupAvailable,
 }: {
   subredditName: string;
   username: string;
   initialConfig: string;
   initialQuota: QuotaState;
   readiness: ReadinessState;
+  initialByoKeyConfigured: boolean;
+  conflictGate: InitResponse['conflictGate'] | undefined;
+  initialLastBackupAvailable: boolean;
 }) {
   const [mode, setMode] = useState<AppMode>('generate');
   const [messages, setMessages] = useState<ClientChatMessage[]>([]);
@@ -654,17 +932,19 @@ function MainApp({
   const [quota, setQuota] = useState<QuotaState>(initialQuota);
   const [saveFlow, setSaveFlow] = useState<SaveFlow>(null);
   const [historyFlow, setHistoryFlow] = useState<HistoryFlow | null>(null);
+  const [testerOpen, setTesterOpen] = useState(false);
+  const [byoOpen, setByoOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [yamlValidation, setYamlValidation] = useState<YamlValidationState>({ status: 'unchecked' });
+  const [byoKeyConfigured, setByoKeyConfigured] = useState(initialByoKeyConfigured);
+  const [lastBackupAvailable, setLastBackupAvailable] = useState(Boolean(initialLastBackupAvailable));
+  const [lastVerifiedSave, setLastVerifiedSave] = useState<LastVerifiedSave>(null);
+  const [demoStep, setDemoStep] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
-
-  useEffect(() => {
-    setYamlValidation({ status: 'unchecked' });
-  }, [workingConfig]);
 
   const pushMessage = useCallback((msg: ClientChatMessage) => {
     setMessages((prev) => [...prev, msg]);
@@ -713,15 +993,33 @@ function MainApp({
           return;
         }
         const data = await res.json() as GenerateResponse;
+        let generatedYaml = data.yaml ? ensureActionReasons(data.yaml) : '';
+        let generatedValidation: ValidateYamlResponse | null = null;
+        if (generatedYaml) {
+          generatedValidation = await validateYaml(generatedYaml);
+        }
         if (data.yaml) {
-          setWorkingConfig((prev) => (prev.trimEnd().length > 0 ? `${prev.trimEnd()}\n${data.yaml}` : data.yaml));
+          if (generatedValidation?.valid) {
+            setWorkingConfig((prev) => (prev.trimEnd().length > 0 ? `${prev.trimEnd()}\n${generatedYaml}` : generatedYaml));
+            showToast({ text: 'generated yaml valid', appearance: 'success' });
+            if (demoStep === 2) setDemoStep(3);
+          } else {
+            const location = generatedValidation?.line ? ` at ${generatedValidation.line}:${generatedValidation.column ?? 1}` : '';
+            generatedYaml = '';
+            pushMessage({
+              role: 'assistant',
+              content: `Generated YAML did not validate${location}: ${generatedValidation?.message ?? 'invalid YAML'}\n\nThe YAML was not appended automatically.\n\n\`\`\`yaml\n${data.yaml}\n\`\`\``,
+              mode,
+              timestamp: Date.now(),
+            });
+          }
         }
         pushMessage({
           role: 'assistant',
           content: data.assistantMessage,
           mode,
           timestamp: Date.now(),
-          ...(data.yaml ? { safetyReview: buildSafetyReview(data.yaml) } : {}),
+          ...(generatedYaml ? { safetyReview: buildSafetyReview(generatedYaml) } : {}),
         });
         setQuota((q) => ({ ...q, [mode]: { ...q[mode], used: Math.min(q[mode].used + 1, q[mode].cap) } }));
       } else if (mode === 'explain') {
@@ -737,6 +1035,7 @@ function MainApp({
         }
         const data = await res.json() as ExplainResponse;
         pushMessage({ role: 'assistant', content: data.explanation, mode, timestamp: Date.now() });
+        if (demoStep === 3) setDemoStep(4);
         setQuota((q) => ({ ...q, [mode]: { ...q[mode], used: Math.min(q[mode].used + 1, q[mode].cap) } }));
       } else {
         const res = await fetch('/api/conflict', {
@@ -751,6 +1050,7 @@ function MainApp({
         }
         const data = await res.json() as ConflictResponse;
         pushMessage({ role: 'assistant', content: data.report, mode, timestamp: Date.now() });
+        if (demoStep === 4) setDemoStep(5);
         setQuota((q) => ({ ...q, [mode]: { ...q[mode], used: Math.min(q[mode].used + 1, q[mode].cap) } }));
       }
     } catch {
@@ -758,7 +1058,7 @@ function MainApp({
     } finally {
       setThinking(false);
     }
-  }, [input, thinking, mode, workingConfig, messages, pushMessage]);
+  }, [input, thinking, mode, workingConfig, messages, pushMessage, validateYaml, demoStep]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -773,6 +1073,10 @@ function MainApp({
   };
 
   const handleConflictClick = () => {
+    if (conflictGate?.enabled && !conflictGate.hasAccess) {
+      showToast({ text: `Conflict Check requires purchase${conflictGate.sku ? ` (${conflictGate.sku})` : ''}.`, appearance: 'neutral' });
+      return;
+    }
     setMode('conflict');
     setInput('Check my config for conflicts and issues.');
   };
@@ -784,7 +1088,7 @@ function MainApp({
       return;
     }
     if (!readiness.wikiWritable) {
-      showToast({ text: 'Manage Wiki Pages permission required to save', appearance: 'neutral' });
+      showToast({ text: WIKI_PERMISSION_HELP, appearance: 'neutral' });
       return;
     }
     const validation = await validateYaml(workingConfig);
@@ -793,12 +1097,16 @@ function MainApp({
       showToast({ text: `Invalid YAML${location}: ${validation.message}`, appearance: 'neutral' });
       return;
     }
-    setSaveFlow({ step: 'diff-preview', appendMode: true, contentToSave: workingConfig.slice(savedConfig.length).replace(/^\n/, ''), saving: false });
+    const pendingSave = buildPendingSave(workingConfig, savedConfig);
+    if (demoStep === 5) {
+      showToast({ text: 'Demo preview opened. Saving is still manual.', appearance: 'neutral' });
+    }
+    setSaveFlow({ step: 'diff-preview', ...pendingSave, saving: false });
   };
 
   const handleReplaceClick = () => {
     if (!readiness.wikiWritable) {
-      showToast({ text: 'Manage Wiki Pages permission required to replace wiki config', appearance: 'neutral' });
+      showToast({ text: WIKI_PERMISSION_HELP, appearance: 'neutral' });
       return;
     }
     setSaveFlow({ step: 'rewrite-confirm' });
@@ -830,16 +1138,35 @@ function MainApp({
     });
 
     if (res.ok) {
-      const separator = savedConfig.trimEnd().length > 0 && saveFlow.contentToSave.trim().length > 0 ? '\n' : '';
-      setSavedConfig(saveFlow.appendMode ? savedConfig.trimEnd() + separator + saveFlow.contentToSave : saveFlow.contentToSave);
+      const data = await res.json() as SaveResponse;
+      setSavedConfig(data.savedContent);
+      setWorkingConfig(data.savedContent);
+      setLastVerifiedSave({ timestamp: data.timestamp, verified: data.verified });
+      setLastBackupAvailable(true);
+      if (demoStep === 5) setDemoStep(null);
       setSaveFlow(null);
-      showToast({ text: 'Saved to wiki', appearance: 'success' });
+      showToast({ text: data.verified ? 'Verified save to wiki' : 'Saved to wiki', appearance: 'success' });
     } else {
       const err = await res.json() as ErrorResponse;
       setSaveFlow({ ...saveFlow, saving: false });
-      const permissionHint = /permission|wiki|403|moderator/i.test(err.message) ? 'Manage Wiki Pages permission required. ' : '';
+      const permissionHint = /permission|wiki|403|moderator/i.test(err.message) ? `${WIKI_PERMISSION_HELP} ` : '';
       showToast({ text: `Save failed: ${permissionHint}${err.message}`, appearance: 'neutral' });
     }
+  };
+
+  const undoLastSave = async () => {
+    const res = await fetch('/api/undo-last-save', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json() as ErrorResponse;
+      showToast({ text: err.message, appearance: 'neutral' });
+      return;
+    }
+    const data = await res.json() as UndoLastSaveResponse;
+    setSavedConfig(data.restoredContent);
+    setWorkingConfig(data.restoredContent);
+    setLastVerifiedSave({ timestamp: Date.now(), verified: data.verified });
+    setYamlValidation({ status: 'unchecked' });
+    showToast({ text: 'Undo restored and verified', appearance: 'success' });
   };
 
   const openHistory = async () => {
@@ -874,7 +1201,8 @@ function MainApp({
   };
 
   const hasUnsavedChanges = workingConfig !== savedConfig;
-  const activeRisk = analyzeRisk(hasUnsavedChanges ? workingConfig.slice(savedConfig.length) || workingConfig : workingConfig, false);
+  const pendingSave = hasUnsavedChanges ? buildPendingSave(workingConfig, savedConfig) : null;
+  const activeRisk = analyzeRisk(pendingSave?.contentToSave ?? workingConfig, pendingSave ? !pendingSave.appendMode : false);
   const quotaPct = Math.min((quota[mode].used / quota[mode].cap) * 100, 100);
   const quotaExhausted = quota[mode].used >= quota[mode].cap;
   const promptChips = [
@@ -894,10 +1222,22 @@ function MainApp({
     }
     const data = await res.json() as DemoConfigResponse;
     setWorkingConfig(data.yaml);
-    setSavedConfig(data.yaml);
     setIsEditing(false);
     setYamlValidation({ status: 'unchecked' });
     showToast({ text: 'Demo config loaded locally', appearance: 'success' });
+  };
+
+  const startDemoWalkthrough = async () => {
+    await loadDemoConfig();
+    setMode('generate');
+    setInput('Add a report-only rule for suspicious referral links with an action_reason.');
+    setDemoStep(2);
+    pushMessage({
+      role: 'assistant',
+      content: 'Demo walkthrough started. The local demo config is loaded without saving. Next: run Generate, then Explain, Conflict, and Preview save.',
+      mode: 'generate',
+      timestamp: Date.now(),
+    });
   };
 
   const placeholder: Record<AppMode, string> = {
@@ -931,10 +1271,16 @@ function MainApp({
               <button
                 key={m}
                 onClick={() => {
+                  if (m === 'conflict' && conflictGate?.enabled && !conflictGate.hasAccess) {
+                    handleConflictClick();
+                    return;
+                  }
                   setMode(m);
                   if (m === 'explain') handleExplainClick();
                   if (m === 'conflict') handleConflictClick();
                 }}
+                disabled={m === 'conflict' && conflictGate?.enabled && !conflictGate.hasAccess}
+                title={m === 'conflict' && conflictGate?.enabled && !conflictGate.hasAccess ? `Conflict Check requires purchase${conflictGate.sku ? ` (${conflictGate.sku})` : ''}.` : undefined}
                 style={mode === m ? { borderBottomColor: '#ff4500' } : {}}
                 className={`px-4 py-2.5 text-[11px] font-mono uppercase tracking-widest border-b-2 -mb-px transition-colors ${
                   mode === m
@@ -964,6 +1310,19 @@ function MainApp({
             </div>
           </div>
           <ReadinessStrip readiness={readiness} />
+          <div className="px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-white dark:bg-[#13131a] flex flex-wrap items-center gap-2 font-mono text-[10px]">
+            <button onClick={() => void startDemoWalkthrough()} className="text-[#ff4500] border border-[#ff4500]/30 px-2 py-1 rounded-sm hover:bg-[#ff4500]/10 uppercase tracking-wider">
+              start demo walkthrough
+            </button>
+            <button onClick={() => setByoOpen(true)} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
+              Gemini key: {byoKeyConfigured ? 'subreddit' : 'shared'}
+            </button>
+            {demoStep !== null && (
+              <span className="text-[#888]">
+                {[1, 2, 3, 4, 5].map((step) => `${step} ${['Load demo', 'Generate', 'Explain', 'Conflict', 'Preview save'][step - 1]}${step === demoStep ? '*' : ''}`).join(' / ')}
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
@@ -1127,6 +1486,12 @@ function MainApp({
               history
             </button>
             <button
+              onClick={() => setTesterOpen(true)}
+              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider"
+            >
+              tester
+            </button>
+            <button
               onClick={() => {
                 void navigator.clipboard.writeText(workingConfig);
                 showToast({ text: 'Config copied', appearance: 'success' });
@@ -1163,12 +1528,28 @@ function MainApp({
           </div>
         </div>
 
+        {lastVerifiedSave && (
+          <div className="px-4 py-2 border-b border-[#1e1e28] bg-emerald-500/5 text-[10px] font-mono text-emerald-400 flex items-center justify-between">
+            <span>verified save · {new Date(lastVerifiedSave.timestamp).toLocaleString()}</span>
+            <button
+              onClick={() => void undoLastSave()}
+              disabled={!lastBackupAvailable}
+              className="border border-emerald-400/30 px-2 py-1 rounded-sm hover:bg-emerald-400/10 disabled:opacity-40 uppercase tracking-wider"
+            >
+              undo last save
+            </button>
+          </div>
+        )}
+
         {/* YAML viewer / editor */}
         <div className="flex-1 overflow-hidden relative">
           {isEditing ? (
             <textarea
               value={workingConfig}
-              onChange={(e) => setWorkingConfig(e.target.value)}
+              onChange={(e) => {
+                setWorkingConfig(e.target.value);
+                setYamlValidation({ status: 'unchecked' });
+              }}
               className="h-full w-full resize-none bg-[#0a0a0e] text-[#c8c8d8] font-mono text-[13px] leading-[1.65] p-4 focus:outline-none caret-[#ff4500]"
               spellCheck={false}
               autoFocus
@@ -1247,6 +1628,12 @@ function MainApp({
           onClose={() => setHistoryFlow(null)}
         />
       )}
+      {testerOpen && (
+        <RuleTesterModal config={workingConfig} onClose={() => setTesterOpen(false)} />
+      )}
+      {byoOpen && (
+        <ByoKeyModal configured={byoKeyConfigured} onConfigured={setByoKeyConfigured} onClose={() => setByoOpen(false)} />
+      )}
     </div>
   );
 }
@@ -1280,6 +1667,9 @@ function App() {
             currentConfig: data.currentConfig,
             quota: data.quota,
             readiness: data.readiness,
+            byoKeyConfigured: data.byoKeyConfigured,
+            conflictGate: data.conflictGate,
+            lastBackupAvailable: Boolean(data.lastBackupAvailable),
           });
         } else if (!data.currentConfig.trim()) {
           setState({
@@ -1288,6 +1678,9 @@ function App() {
             subredditName: data.subredditName,
             username: data.username,
             readiness: data.readiness,
+            byoKeyConfigured: data.byoKeyConfigured,
+            conflictGate: data.conflictGate,
+            lastBackupAvailable: Boolean(data.lastBackupAvailable),
           });
         } else {
           setState({
@@ -1298,6 +1691,9 @@ function App() {
             initialConfig: data.currentConfig,
             quota: data.quota,
             readiness: data.readiness,
+            byoKeyConfigured: data.byoKeyConfigured,
+            conflictGate: data.conflictGate,
+            lastBackupAvailable: Boolean(data.lastBackupAvailable),
           });
         }
       } catch (err) {
@@ -1331,14 +1727,17 @@ function App() {
             initialConfig={state.currentConfig}
             initialQuota={state.quota}
             readiness={state.readiness}
+            initialByoKeyConfigured={state.byoKeyConfigured}
+            conflictGate={state.conflictGate}
+            initialLastBackupAvailable={state.lastBackupAvailable}
           />
           <PrivacyModal
             subredditName={state.subredditName}
             onAck={() => {
               if (!state.currentConfig.trim()) {
-                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username, readiness: state.readiness });
+                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable });
               } else {
-                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota, readiness: state.readiness });
+                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable });
               }
             }}
           />
@@ -1346,14 +1745,14 @@ function App() {
       )}
       {state.stage === 'template' && (
         <>
-          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} readiness={state.readiness ?? DEFAULT_READINESS} />
+          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} readiness={state.readiness ?? DEFAULT_READINESS} initialByoKeyConfigured={state.byoKeyConfigured} conflictGate={state.conflictGate} initialLastBackupAvailable={state.lastBackupAvailable} />
           <TemplatePicker
             onSelect={(_, yaml) =>
-              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness })
+              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable })
             }
             onDemo={() => {
               void fetchDemoConfig()
-                .then((yaml) => setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness }))
+                .then((yaml) => setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable }))
                 .catch(() => showToast({ text: 'Failed to load demo config', appearance: 'neutral' }));
             }}
           />
@@ -1366,6 +1765,9 @@ function App() {
           initialConfig={state.initialConfig}
           initialQuota={state.quota}
           readiness={state.readiness}
+          initialByoKeyConfigured={state.byoKeyConfigured}
+          conflictGate={state.conflictGate}
+          initialLastBackupAvailable={state.lastBackupAvailable}
         />
       )}
     </>
