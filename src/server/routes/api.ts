@@ -50,6 +50,20 @@ import { testAutomodRules } from '../core/ruleTester';
 
 export const api = new Hono();
 
+function normalizeModPermissionNames(modPermissions: unknown[]): string[] {
+  return modPermissions.map((permission) => String(permission));
+}
+
+function canManageSubredditKey(modPermissionNames: string[]): boolean {
+  return modPermissionNames.includes('all') || modPermissionNames.includes('config') || modPermissionNames.includes('wiki');
+}
+
+async function getCurrentUserModPermissionNames(subredditName: string): Promise<string[]> {
+  const currentUser = await reddit.getCurrentUser();
+  const modPermissions = currentUser ? await currentUser.getModPermissionsForSubreddit(subredditName) : [];
+  return normalizeModPermissionNames(modPermissions);
+}
+
 api.get('/init', async (c) => {
   const { postId, subredditName } = context;
 
@@ -69,7 +83,7 @@ api.get('/init', async (c) => {
       getConflictGateStatus(),
       hasLastBackup(subredditName),
     ]);
-    const modPermissionNames = modPermissions.map((permission) => String(permission));
+    const modPermissionNames = normalizeModPermissionNames(modPermissions);
     const wikiWritable = modPermissionNames.includes('wiki') || modPermissionNames.includes('all');
 
     return c.json<InitResponse>({
@@ -134,6 +148,14 @@ api.post('/byo-key', async (c) => {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
   try {
+    const modPermissionNames = await getCurrentUserModPermissionNames(subredditName);
+    if (!canManageSubredditKey(modPermissionNames)) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Only moderators with Everything, Manage Settings, or Manage Wiki Pages permission can set the subreddit Gemini key.' },
+        403
+      );
+    }
+
     const body = await c.req.json<SetByoKeyRequest>();
     await setSubredditGeminiApiKey(subredditName, body.apiKey);
     return c.json<SetByoKeyResponse>({ type: 'set-byo-key', configured: true });
@@ -148,6 +170,14 @@ api.delete('/byo-key', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const modPermissionNames = await getCurrentUserModPermissionNames(subredditName);
+  if (!canManageSubredditKey(modPermissionNames)) {
+    return c.json<ErrorResponse>(
+      { status: 'error', message: 'Only moderators with Everything, Manage Settings, or Manage Wiki Pages permission can remove the subreddit Gemini key.' },
+      403
+    );
+  }
+
   await removeSubredditGeminiApiKey(subredditName);
   return c.json<SetByoKeyResponse>({ type: 'set-byo-key', configured: false });
 });
