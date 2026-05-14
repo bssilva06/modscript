@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { context, reddit, redis } from '@devvit/web/server';
+import { context, reddit, redis, settings } from '@devvit/web/server';
 import type {
   InitResponse,
   PrivacyAckResponse,
@@ -25,8 +25,9 @@ import type {
   ByoKeyStatusResponse,
   SetByoKeyRequest,
   SetByoKeyResponse,
+  ResetQuotaResponse,
 } from '../../shared/api';
-import { checkQuota, incrementQuota, logUsage, getQuotaStatus } from '../core/quota';
+import { checkQuota, incrementQuota, logUsage, getQuotaStatus, resetDailyQuota } from '../core/quota';
 import {
   getCurrent,
   getCurrentWithStatus,
@@ -74,7 +75,7 @@ api.get('/init', async (c) => {
   try {
     const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
     const currentUser = await reddit.getCurrentUser();
-    const [privacyRaw, currentWiki, quota, modPermissions, byoKey, conflictGate, lastBackupAvailable] = await Promise.all([
+    const [privacyRaw, currentWiki, quota, modPermissions, byoKey, conflictGate, lastBackupAvailable, debugToolsEnabled] = await Promise.all([
       redis.get(`privacy:acked:${subredditName}:${username}`),
       getCurrentWithStatus(subredditName),
       getQuotaStatus(subredditName),
@@ -82,6 +83,7 @@ api.get('/init', async (c) => {
       getSubredditGeminiApiKey(subredditName),
       getConflictGateStatus(),
       hasLastBackup(subredditName),
+      settings.get<boolean>('debugToolsEnabled'),
     ]);
     const modPermissionNames = normalizeModPermissionNames(modPermissions);
     const wikiWritable = modPermissionNames.includes('wiki') || modPermissionNames.includes('all');
@@ -103,6 +105,7 @@ api.get('/init', async (c) => {
       byoKeyConfigured: Boolean(byoKey),
       conflictGate,
       lastBackupAvailable,
+      debugToolsEnabled: Boolean(debugToolsEnabled),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -180,6 +183,29 @@ api.delete('/byo-key', async (c) => {
 
   await removeSubredditGeminiApiKey(subredditName);
   return c.json<SetByoKeyResponse>({ type: 'set-byo-key', configured: false });
+});
+
+api.post('/debug/reset-quotas', async (c) => {
+  const { subredditName } = context;
+  if (!subredditName) {
+    return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
+  }
+
+  const debugToolsEnabled = await settings.get<boolean>('debugToolsEnabled');
+  if (!debugToolsEnabled) {
+    return c.json<ErrorResponse>({ status: 'error', message: 'Debug tools are disabled.' }, 404);
+  }
+
+  const modPermissionNames = await getCurrentUserModPermissionNames(subredditName);
+  if (!canManageSubredditKey(modPermissionNames)) {
+    return c.json<ErrorResponse>(
+      { status: 'error', message: 'Only moderators with Everything, Manage Settings, or Manage Wiki Pages permission can reset demo quotas.' },
+      403
+    );
+  }
+
+  const quota = await resetDailyQuota(subredditName);
+  return c.json<ResetQuotaResponse>({ type: 'reset-quotas', quota });
 });
 
 api.post('/privacy-ack', async (c) => {

@@ -46,6 +46,7 @@ export type InitResponse = {
     sku?: string;
   };
   lastBackupAvailable?: boolean;
+  debugToolsEnabled: boolean;
 };
 
 export type PrivacyAckResponse = {
@@ -173,6 +174,11 @@ export type SetByoKeyRequest = {
 export type SetByoKeyResponse = {
   type: 'set-byo-key';
   configured: boolean;
+};
+
+export type ResetQuotaResponse = {
+  type: 'reset-quotas';
+  quota: Record<AppMode, QuotaModeStatus>;
 };
 
 export type ErrorResponse = {

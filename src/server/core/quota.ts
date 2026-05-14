@@ -21,6 +21,10 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10).replace(/-/g, '');
 }
 
+function quotaRedisKey(subredditName: string, mode: AppMode, dayKey = todayKey()): string {
+  return `quota:${subredditName}:${mode}:${dayKey}`;
+}
+
 export async function checkQuota(
   subredditName: string,
   mode: AppMode,
@@ -48,7 +52,7 @@ export async function checkQuota(
 
   // 3. Daily quota
   const cap = (await settings.get<number>(modeSettingKey[mode])) ?? defaultCaps[mode];
-  const quotaKey = `quota:${subredditName}:${mode}:${todayKey()}`;
+  const quotaKey = quotaRedisKey(subredditName, mode);
   const current = parseInt((await redis.get(quotaKey)) ?? '0', 10);
   if (current >= cap) {
     const label = { conflict: 'Conflict Check', explain: 'Explain', generate: 'Generate' }[mode];
@@ -62,7 +66,7 @@ export async function checkQuota(
 }
 
 export async function incrementQuota(subredditName: string, mode: AppMode): Promise<void> {
-  const quotaKey = `quota:${subredditName}:${mode}:${todayKey()}`;
+  const quotaKey = quotaRedisKey(subredditName, mode);
   const current = await redis.incrBy(quotaKey, 1);
   if (current === 1) {
     await redis.expire(quotaKey, 172800); // 48h auto-cleanup
@@ -74,9 +78,9 @@ export async function getQuotaStatus(
 ): Promise<Record<AppMode, QuotaModeStatus>> {
   const today = todayKey();
   const [g, e, c] = await Promise.all([
-    redis.get(`quota:${subredditName}:generate:${today}`),
-    redis.get(`quota:${subredditName}:explain:${today}`),
-    redis.get(`quota:${subredditName}:conflict:${today}`),
+    redis.get(quotaRedisKey(subredditName, 'generate', today)),
+    redis.get(quotaRedisKey(subredditName, 'explain', today)),
+    redis.get(quotaRedisKey(subredditName, 'conflict', today)),
   ]);
   const capG = (await settings.get<number>('quotaGenerate')) ?? defaultCaps.generate;
   const capE = (await settings.get<number>('quotaExplain'))  ?? defaultCaps.explain;
@@ -86,6 +90,16 @@ export async function getQuotaStatus(
     explain:  { used: Math.min(parseInt(e ?? '0', 10), capE), cap: capE },
     conflict: { used: Math.min(parseInt(c ?? '0', 10), capC), cap: capC },
   };
+}
+
+export async function resetDailyQuota(subredditName: string): Promise<Record<AppMode, QuotaModeStatus>> {
+  const today = todayKey();
+  await Promise.all([
+    redis.del(quotaRedisKey(subredditName, 'generate', today)),
+    redis.del(quotaRedisKey(subredditName, 'explain', today)),
+    redis.del(quotaRedisKey(subredditName, 'conflict', today)),
+  ]);
+  return await getQuotaStatus(subredditName);
 }
 
 export async function logUsage(

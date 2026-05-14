@@ -27,6 +27,7 @@ import type {
   RuleTestResponse,
   RuleTestContentType,
   SetByoKeyResponse,
+  ResetQuotaResponse,
 } from '../shared/api';
 
 // --- Types ---
@@ -59,9 +60,9 @@ const WIKI_PERMISSION_HELP = 'Manage Wiki Pages permission required. Ask a moder
 
 type AppState =
   | { stage: 'loading' }
-  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean }
-  | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean }
-  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean };
+  | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean }
+  | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean }
+  | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean };
 
 type DiffLine = { kind: 'same' | 'added' | 'removed'; text: string };
 
@@ -907,6 +908,7 @@ function MainApp({
   initialByoKeyConfigured,
   conflictGate,
   initialLastBackupAvailable,
+  debugToolsEnabled,
 }: {
   subredditName: string;
   username: string;
@@ -916,6 +918,7 @@ function MainApp({
   initialByoKeyConfigured: boolean;
   conflictGate: InitResponse['conflictGate'] | undefined;
   initialLastBackupAvailable: boolean;
+  debugToolsEnabled: boolean;
 }) {
   const [mode, setMode] = useState<AppMode>('generate');
   const [messages, setMessages] = useState<ClientChatMessage[]>([]);
@@ -1261,6 +1264,18 @@ function MainApp({
     setDemoStep(2);
   };
 
+  const resetQuotas = async () => {
+    const res = await fetch('/api/debug/reset-quotas', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json() as ErrorResponse;
+      showToast({ text: err.message, appearance: 'neutral' });
+      return;
+    }
+    const data = await res.json() as ResetQuotaResponse;
+    setQuota(data.quota);
+    showToast({ text: 'Demo quotas reset', appearance: 'success' });
+  };
+
   const placeholder: Record<AppMode, string> = {
     generate: 'Describe a rule, e.g. "Remove posts from accounts under 7 days old"',
     explain: 'Ask about a specific rule, or press Enter to explain the full config',
@@ -1343,6 +1358,11 @@ function MainApp({
             <button onClick={() => setByoOpen(true)} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
               Gemini key: {byoKeyConfigured ? 'subreddit' : 'shared'}
             </button>
+            {debugToolsEnabled && (
+              <button onClick={() => void resetQuotas()} className="text-amber-500 border border-amber-500/30 px-2 py-1 rounded-sm hover:bg-amber-500/10 uppercase tracking-wider">
+                reset quotas
+              </button>
+            )}
             {demoStep !== null && (
               <span className="text-[#888]">
                 {[1, 2, 3, 4, 5].map((step) => `${step} ${['Load demo', 'Generate', 'Explain', 'Conflict', 'Preview save'][step - 1]}${step === demoStep ? '*' : ''}`).join(' / ')}
@@ -1696,6 +1716,7 @@ function App() {
             byoKeyConfigured: data.byoKeyConfigured,
             conflictGate: data.conflictGate,
             lastBackupAvailable: Boolean(data.lastBackupAvailable),
+            debugToolsEnabled: data.debugToolsEnabled,
           });
         } else if (!data.currentConfig.trim()) {
           setState({
@@ -1707,6 +1728,7 @@ function App() {
             byoKeyConfigured: data.byoKeyConfigured,
             conflictGate: data.conflictGate,
             lastBackupAvailable: Boolean(data.lastBackupAvailable),
+            debugToolsEnabled: data.debugToolsEnabled,
           });
         } else {
           setState({
@@ -1720,6 +1742,7 @@ function App() {
             byoKeyConfigured: data.byoKeyConfigured,
             conflictGate: data.conflictGate,
             lastBackupAvailable: Boolean(data.lastBackupAvailable),
+            debugToolsEnabled: data.debugToolsEnabled,
           });
         }
       } catch (err) {
@@ -1756,14 +1779,15 @@ function App() {
             initialByoKeyConfigured={state.byoKeyConfigured}
             conflictGate={state.conflictGate}
             initialLastBackupAvailable={state.lastBackupAvailable}
+            debugToolsEnabled={state.debugToolsEnabled}
           />
           <PrivacyModal
             subredditName={state.subredditName}
             onAck={() => {
               if (!state.currentConfig.trim()) {
-                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable });
+                setState({ stage: 'template', postId: state.postId, subredditName: state.subredditName, username: state.username, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable, debugToolsEnabled: state.debugToolsEnabled });
               } else {
-                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable });
+                setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: state.currentConfig, quota: state.quota, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable, debugToolsEnabled: state.debugToolsEnabled });
               }
             }}
           />
@@ -1771,14 +1795,14 @@ function App() {
       )}
       {state.stage === 'template' && (
         <>
-          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} readiness={state.readiness ?? DEFAULT_READINESS} initialByoKeyConfigured={state.byoKeyConfigured} conflictGate={state.conflictGate} initialLastBackupAvailable={state.lastBackupAvailable} />
+          <MainApp subredditName={state.subredditName} username={state.username} initialConfig="" initialQuota={DEFAULT_QUOTA} readiness={state.readiness ?? DEFAULT_READINESS} initialByoKeyConfigured={state.byoKeyConfigured} conflictGate={state.conflictGate} initialLastBackupAvailable={state.lastBackupAvailable} debugToolsEnabled={state.debugToolsEnabled} />
           <TemplatePicker
             onSelect={(_, yaml) =>
-              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable })
+              setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable, debugToolsEnabled: state.debugToolsEnabled })
             }
             onDemo={() => {
               void fetchDemoConfig()
-                .then((yaml) => setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable }))
+                .then((yaml) => setState({ stage: 'app', postId: state.postId, subredditName: state.subredditName, username: state.username, initialConfig: yaml, quota: DEFAULT_QUOTA, readiness: state.readiness, byoKeyConfigured: state.byoKeyConfigured, conflictGate: state.conflictGate, lastBackupAvailable: state.lastBackupAvailable, debugToolsEnabled: state.debugToolsEnabled }))
                 .catch(() => showToast({ text: 'Failed to load demo config', appearance: 'neutral' }));
             }}
           />
@@ -1794,6 +1818,7 @@ function App() {
           initialByoKeyConfigured={state.byoKeyConfigured}
           conflictGate={state.conflictGate}
           initialLastBackupAvailable={state.lastBackupAvailable}
+          debugToolsEnabled={state.debugToolsEnabled}
         />
       )}
     </>

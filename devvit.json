@@ -52,6 +52,11 @@
         "type": "string",
         "label": "Conflict Check IAP SKU",
         "defaultValue": "conflict_check"
+      },
+      "debugToolsEnabled": {
+        "type": "boolean",
+        "label": "Enable debug tools",
+        "defaultValue": false
       }
     }
   },
