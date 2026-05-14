@@ -862,7 +862,12 @@ function ByoKeyModal({
   const removeKey = async () => {
     setSaving(true);
     try {
-      await fetch('/api/byo-key', { method: 'DELETE' });
+      const res = await fetch('/api/byo-key', { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json() as ErrorResponse;
+        showToast({ text: err.message, appearance: 'neutral' });
+        return;
+      }
       onConfigured(false);
       showToast({ text: 'BYO Gemini key removed', appearance: 'success' });
       onClose();
@@ -879,6 +884,7 @@ function ByoKeyModal({
       </div>
       <div className="p-5 space-y-3">
         <p className="text-xs text-gray-500 dark:text-[#888]">Stored in Redis for this subreddit. The key is never returned to the client. BYO keys bypass shared daily AI quotas but still use the input-size limit and pause switch.</p>
+        <p className="text-xs text-gray-500 dark:text-[#888]">Only moderators with Everything, Manage Settings, or Manage Wiki Pages permission can change this key.</p>
         <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={configured ? 'key configured' : 'paste Gemini API key'} className="w-full bg-[#f5f5f5] dark:bg-[#0d0d12] border border-[#ddd] dark:border-[#252530] text-xs font-mono p-2 text-gray-900 dark:text-[#d0d0d8]" />
       </div>
       <div className="px-5 pb-5 flex justify-end gap-2">
@@ -1214,21 +1220,23 @@ function MainApp({
     'Filter posts with repeated emoji spam',
   ];
 
-  const loadDemoConfig = async () => {
+  const loadDemoConfig = async (): Promise<boolean> => {
     const res = await fetch('/api/demo-config');
     if (!res.ok) {
       showToast({ text: 'Failed to load demo config', appearance: 'neutral' });
-      return;
+      return false;
     }
     const data = await res.json() as DemoConfigResponse;
     setWorkingConfig(data.yaml);
     setIsEditing(false);
     setYamlValidation({ status: 'unchecked' });
     showToast({ text: 'Demo config loaded locally', appearance: 'success' });
+    return true;
   };
 
   const startDemoWalkthrough = async () => {
-    await loadDemoConfig();
+    const loaded = await loadDemoConfig();
+    if (!loaded) return;
     setMode('generate');
     setInput('Add a report-only rule for suspicious referral links with an action_reason.');
     setDemoStep(2);
@@ -1238,6 +1246,19 @@ function MainApp({
       mode: 'generate',
       timestamp: Date.now(),
     });
+  };
+
+  const resetDemoWalkthrough = async () => {
+    const loaded = await loadDemoConfig();
+    if (!loaded) return;
+    setMessages([]);
+    setInput('Add a report-only rule for suspicious referral links with an action_reason.');
+    setMode('generate');
+    setThinking(false);
+    setSaveFlow(null);
+    setHistoryFlow(null);
+    setTesterOpen(false);
+    setDemoStep(2);
   };
 
   const placeholder: Record<AppMode, string> = {
@@ -1314,6 +1335,11 @@ function MainApp({
             <button onClick={() => void startDemoWalkthrough()} className="text-[#ff4500] border border-[#ff4500]/30 px-2 py-1 rounded-sm hover:bg-[#ff4500]/10 uppercase tracking-wider">
               start demo walkthrough
             </button>
+            {demoStep !== null && (
+              <button onClick={() => void resetDemoWalkthrough()} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
+                reset demo
+              </button>
+            )}
             <button onClick={() => setByoOpen(true)} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
               Gemini key: {byoKeyConfigured ? 'subreddit' : 'shared'}
             </button>
