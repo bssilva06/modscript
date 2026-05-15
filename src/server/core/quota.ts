@@ -14,7 +14,7 @@ const modeSettingKey: Record<AppMode, string> = {
 const defaultCaps: Record<AppMode, number> = {
   generate: 50,
   explain: 50,
-  conflict: 5,
+  conflict: 50,
 };
 
 function todayKey(): string {

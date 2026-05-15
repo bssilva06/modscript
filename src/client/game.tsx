@@ -46,7 +46,7 @@ type RuleReviewCard = { name: string; action: string; triggerSummary: string; ri
 const DEFAULT_QUOTA: QuotaState = {
   generate: { used: 0, cap: 50 },
   explain:  { used: 0, cap: 50 },
-  conflict: { used: 0, cap: 5  },
+  conflict: { used: 0, cap: 50 },
 };
 
 const DEFAULT_READINESS: ReadinessState = {
@@ -269,8 +269,8 @@ const modeLabel: Record<AppMode, string> = {
 
 function ModalShell({ children, width = 'max-w-md' }: { children: ReactNode; width?: string }) {
   return (
-    <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-4">
-      <div className={`bg-white dark:bg-[#16161e] border border-[#e0e0e0] dark:border-[#252535] w-full ${width} flex flex-col`}>
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-50 p-3 sm:p-4">
+      <div className={`bg-white dark:bg-[#16161e] border border-[#e0e0e0] dark:border-[#252535] w-full ${width} max-h-[92dvh] flex flex-col overflow-hidden`}>
         {children}
       </div>
     </div>
@@ -295,7 +295,7 @@ function RiskBadge({ analysis }: { analysis: RiskAnalysis }) {
 function SafetyPanel({ review }: { review: SafetyReview }) {
   const hasReason = review.notes.some((note) => note.toLowerCase().includes('action_reason'));
   return (
-    <div className="mt-1 bg-[#fdfdfd] dark:bg-[#111118] border border-[#e8e8e8] dark:border-[#252535] px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-[#777] max-w-[86%]">
+    <div className="mt-1 bg-[#fdfdfd] dark:bg-[#111118] border border-[#e8e8e8] dark:border-[#252535] px-3 py-2 font-mono text-[10px] text-gray-500 dark:text-[#777] max-w-full sm:max-w-[86%]">
       <div className="uppercase tracking-widest text-[#ff4500] mb-1">why this rule is safe</div>
       <div className="mb-1 flex flex-wrap gap-1.5">
         <span>action: {review.action}</span>
@@ -316,11 +316,11 @@ function SafetyPanel({ review }: { review: SafetyReview }) {
 
 function ReadinessStrip({ readiness }: { readiness: ReadinessState }) {
   return (
-    <div className="px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-[#fafafa] dark:bg-[#101016] font-mono text-[10px] text-[#777] dark:text-[#666] flex items-center gap-3">
+    <div className="px-3 sm:px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-[#fafafa] dark:bg-[#101016] font-mono text-[10px] text-[#777] dark:text-[#666] flex flex-wrap items-center gap-x-3 gap-y-1">
       <span>wiki readable: <span className={readiness.wikiReadable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiReadable ? 'yes' : 'no'}</span></span>
       <span title={!readiness.wikiWritable ? WIKI_PERMISSION_HELP : undefined}>save permission: <span className={readiness.wikiWritable ? 'text-emerald-500' : 'text-red-400'}>{readiness.wikiWritable ? 'ready' : 'blocked'}</span></span>
-      <span className="truncate">perms: {readiness.modPermissions.length > 0 ? readiness.modPermissions.join(', ') : 'none'}</span>
-      {readiness.message && <span className="truncate text-amber-500">{readiness.message}</span>}
+      <span className="min-w-0 truncate">perms: {readiness.modPermissions.length > 0 ? readiness.modPermissions.join(', ') : 'none'}</span>
+      {readiness.message && <span className="min-w-0 truncate text-amber-500">{readiness.message}</span>}
     </div>
   );
 }
@@ -1289,20 +1289,20 @@ function MainApp({
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#0a0a0e] text-gray-900 dark:text-gray-100">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-[#0a0a0e] text-gray-900 dark:text-gray-100 lg:flex-row">
 
       {/* Left: Chat panel */}
-      <div className="flex flex-col w-1/2 border-r border-[#e0e0e0] dark:border-[#1e1e28] bg-white dark:bg-[#13131a]">
+      <div className="flex min-h-0 h-[48dvh] flex-col border-b border-[#e0e0e0] bg-white dark:border-[#1e1e28] dark:bg-[#13131a] lg:h-auto lg:w-[44%] lg:border-b-0 lg:border-r xl:w-[40%]">
 
         <div className="border-b border-[#e0e0e0] dark:border-[#1e1e28]">
-          <div className="flex items-center justify-between px-4 pt-3 pb-2">
-            <span className="font-mono text-xs font-semibold text-[#ff4500] tracking-wide">
+          <div className="flex items-center justify-between gap-3 px-3 pt-3 pb-2 sm:px-4">
+            <span className="min-w-0 truncate font-mono text-xs font-semibold text-[#ff4500] tracking-wide">
               r/{subredditName}
             </span>
-            <span className="font-mono text-[10px] text-[#888]">u/{username}</span>
+            <span className="shrink-0 font-mono text-[10px] text-[#888]">u/{username}</span>
           </div>
 
-          <div className="flex border-b border-[#e0e0e0] dark:border-[#1e1e28]">
+          <div className="grid grid-cols-3 border-b border-[#e0e0e0] dark:border-[#1e1e28]">
             {(['generate', 'explain', 'conflict'] as AppMode[]).map((m) => (
               <button
                 key={m}
@@ -1318,7 +1318,7 @@ function MainApp({
                 disabled={m === 'conflict' && conflictGate?.enabled && !conflictGate.hasAccess}
                 title={m === 'conflict' && conflictGate?.enabled && !conflictGate.hasAccess ? `Conflict Check requires purchase${conflictGate.sku ? ` (${conflictGate.sku})` : ''}.` : undefined}
                 style={mode === m ? { borderBottomColor: '#ff4500' } : {}}
-                className={`px-4 py-2.5 text-[11px] font-mono uppercase tracking-widest border-b-2 -mb-px transition-colors ${
+                className={`min-w-0 px-2 py-2.5 text-[10px] font-mono uppercase tracking-widest border-b-2 -mb-px transition-colors sm:text-[11px] ${
                   mode === m
                     ? 'text-[#ff4500]'
                     : 'border-b-transparent text-[#888] hover:text-gray-700 dark:hover:text-[#bbb]'
@@ -1329,7 +1329,7 @@ function MainApp({
             ))}
           </div>
 
-          <div className="px-4 py-2">
+          <div className="px-3 py-2 sm:px-4">
             <div className="flex justify-between items-center mb-1.5">
               <span className="text-[10px] font-mono text-[#aaa] dark:text-[#555] uppercase tracking-wider">
                 {modeLabel[mode]} quota
@@ -1346,46 +1346,46 @@ function MainApp({
             </div>
           </div>
           <ReadinessStrip readiness={readiness} />
-          <div className="px-4 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-white dark:bg-[#13131a] flex flex-wrap items-center gap-2 font-mono text-[10px]">
-            <button onClick={() => void startDemoWalkthrough()} className="text-[#ff4500] border border-[#ff4500]/30 px-2 py-1 rounded-sm hover:bg-[#ff4500]/10 uppercase tracking-wider">
+          <div className="px-3 py-2 border-t border-[#e0e0e0] dark:border-[#1e1e28] bg-white dark:bg-[#13131a] flex flex-wrap items-center gap-1.5 sm:gap-2 font-mono text-[10px]">
+            <button onClick={() => void startDemoWalkthrough()} className="min-h-8 text-[#ff4500] border border-[#ff4500]/30 px-2 py-1 rounded-sm hover:bg-[#ff4500]/10 uppercase tracking-wider sm:min-h-0">
               start demo walkthrough
             </button>
             {demoStep !== null && (
-              <button onClick={() => void resetDemoWalkthrough()} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
+              <button onClick={() => void resetDemoWalkthrough()} className="min-h-8 text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider sm:min-h-0">
                 reset demo
               </button>
             )}
-            <button onClick={() => setByoOpen(true)} className="text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider">
+            <button onClick={() => setByoOpen(true)} className="min-h-8 text-[#777] border border-[#e0e0e0] dark:border-[#252535] px-2 py-1 rounded-sm hover:text-[#ff4500] uppercase tracking-wider sm:min-h-0">
               Gemini key: {byoKeyConfigured ? 'subreddit' : 'shared'}
             </button>
             {debugToolsEnabled && (
-              <button onClick={() => void resetQuotas()} className="text-amber-500 border border-amber-500/30 px-2 py-1 rounded-sm hover:bg-amber-500/10 uppercase tracking-wider">
+              <button onClick={() => void resetQuotas()} className="min-h-8 text-amber-500 border border-amber-500/30 px-2 py-1 rounded-sm hover:bg-amber-500/10 uppercase tracking-wider sm:min-h-0">
                 reset quotas
               </button>
             )}
             {demoStep !== null && (
-              <span className="text-[#888]">
+              <span className="basis-full text-[#888] leading-relaxed sm:basis-auto">
                 {[1, 2, 3, 4, 5].map((step) => `${step} ${['Load demo', 'Generate', 'Explain', 'Conflict', 'Preview save'][step - 1]}${step === demoStep ? '*' : ''}`).join(' / ')}
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 flex flex-col gap-3">
           {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full">
-              <div className="font-mono text-left">
-                <div className="text-[#d0d0d0] dark:text-[#252535] text-[11px] mb-2 select-none">
+            <div className="flex min-h-full items-center justify-center py-4">
+              <div className="font-mono text-left max-w-full">
+                <div className="hidden text-[#d0d0d0] dark:text-[#252535] text-[11px] mb-2 select-none sm:block">
                   {String.fromCharCode(9484)}{String.fromCharCode(9472)} modscript {String.fromCharCode(9472).repeat(28)}{String.fromCharCode(9488)}
                 </div>
-                <div className="px-4 space-y-1">
+                <div className="px-1 space-y-1 sm:px-4">
                   <div className="text-[10px] text-[#bbb] dark:text-[#3a3a4a]">$ mode: {mode}</div>
-                  <div className="text-[#d0d0d0] dark:text-[#1e1e28] text-[10px] select-none">{String.fromCharCode(9472).repeat(36)}</div>
+                  <div className="hidden text-[#d0d0d0] dark:text-[#1e1e28] text-[10px] select-none sm:block">{String.fromCharCode(9472).repeat(36)}</div>
                   <div className="text-[#ff4500]/40 text-[10px] leading-relaxed">
                     {emptyStateText[mode][0]}<br />{emptyStateText[mode][1]}
                   </div>
                 </div>
-                <div className="text-[#d0d0d0] dark:text-[#252535] text-[11px] mt-2 select-none">
+                <div className="hidden text-[#d0d0d0] dark:text-[#252535] text-[11px] mt-2 select-none sm:block">
                   {String.fromCharCode(9492)}{String.fromCharCode(9472).repeat(36)}{String.fromCharCode(9496)}
                 </div>
                 <div className="text-[10px] font-mono mt-2 px-1 text-[#bbb] dark:text-[#444]">
@@ -1412,14 +1412,14 @@ function MainApp({
           {messages.map((msg, i) => (
             <div
               key={i}
-              className={`group flex flex-col gap-1 max-w-[86%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
+              className={`group flex flex-col gap-1 max-w-[96%] sm:max-w-[86%] ${msg.role === 'user' ? 'self-end items-end' : 'self-start items-start'}`}
             >
               {msg.role === 'user' ? (
-                <div className="bg-[#ff4500] text-white text-sm px-3 py-2 rounded-sm rounded-br-none leading-relaxed whitespace-pre-wrap">
+                <div className="bg-[#ff4500] text-white text-sm px-3 py-2 rounded-sm rounded-br-none leading-relaxed whitespace-pre-wrap break-words">
                   {msg.content}
                 </div>
               ) : (
-                <div className={`bg-[#f6f6f8] dark:bg-[#1a1a22] text-sm px-3 py-2.5 rounded-sm border-l-2 ${modeAccentBorder[msg.mode]} text-gray-800 dark:text-[#d0d0d8] leading-relaxed`}>
+                <div className={`bg-[#f6f6f8] dark:bg-[#1a1a22] text-sm px-3 py-2.5 rounded-sm border-l-2 ${modeAccentBorder[msg.mode]} text-gray-800 dark:text-[#d0d0d8] leading-relaxed break-words`}>
                   <ReactMarkdown
                     components={{
                       h1: ({ children }) => <h1 className="text-sm font-bold mt-2 mb-1 font-mono">{children}</h1>,
@@ -1494,12 +1494,12 @@ function MainApp({
             onKeyDown={handleKeyDown}
             placeholder={placeholder[mode]}
             rows={2}
-            className="flex-1 resize-none bg-[#f5f5f5] dark:bg-[#0d0d12] border border-[#ddd] dark:border-[#252530] text-sm text-gray-900 dark:text-[#d0d0d8] placeholder-[#bbb] dark:placeholder-[#3a3a4a] p-2 font-mono text-xs focus:outline-none focus:border-[#ff4500] dark:focus:border-[#ff4500] transition-colors rounded-sm"
+            className="min-w-0 flex-1 resize-none bg-[#f5f5f5] dark:bg-[#0d0d12] border border-[#ddd] dark:border-[#252530] text-sm text-gray-900 dark:text-[#d0d0d8] placeholder-[#bbb] dark:placeholder-[#3a3a4a] p-2 font-mono text-xs focus:outline-none focus:border-[#ff4500] dark:focus:border-[#ff4500] transition-colors rounded-sm"
           />
           <button
             onClick={() => void handleSend()}
             disabled={!input.trim() || thinking}
-            className="bg-[#ff4500] hover:bg-[#e03d00] text-white text-[10px] font-mono px-3 py-2 transition-colors disabled:opacity-40 shrink-0 uppercase tracking-widest rounded-sm"
+            className="min-h-10 bg-[#ff4500] hover:bg-[#e03d00] text-white text-[10px] font-mono px-3 py-2 transition-colors disabled:opacity-40 shrink-0 uppercase tracking-widest rounded-sm sm:min-h-0"
           >
             Send
           </button>
@@ -1507,11 +1507,11 @@ function MainApp({
       </div>
 
       {/* Right: Code panel — always dark */}
-      <div className="flex flex-col w-1/2 bg-[#0a0a0e]">
+      <div className="flex min-h-0 flex-1 flex-col bg-[#0a0a0e] lg:w-[56%] xl:w-[60%]">
 
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#1e1e28] bg-[#0d0d12] shrink-0">
-          <div className="flex items-center gap-2.5">
-            <span className="font-mono text-xs text-[#4a4a5a]">config/automoderator</span>
+        <div className="flex flex-col gap-2 px-3 py-2.5 border-b border-[#1e1e28] bg-[#0d0d12] shrink-0 xl:flex-row xl:items-center xl:justify-between xl:px-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-0 truncate font-mono text-xs text-[#4a4a5a]">config/automoderator</span>
             {hasUnsavedChanges && (
               <span className="text-[10px] font-mono text-amber-400 border border-amber-400/25 bg-amber-400/5 px-1.5 py-0.5 rounded-sm">
                 {String.fromCharCode(9679)} unsaved
@@ -1524,16 +1524,16 @@ function MainApp({
               </span>
             )}
           </div>
-          <div className="flex items-center border border-[#1e1e28]">
+          <div className="grid grid-cols-3 overflow-hidden border border-[#1e1e28] sm:flex sm:items-center">
             <button
               onClick={() => void openHistory()}
-              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider"
+              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-2 sm:py-1.5 border-r border-b sm:border-b-0 border-[#1e1e28] transition-colors uppercase tracking-wider"
             >
               history
             </button>
             <button
               onClick={() => setTesterOpen(true)}
-              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider"
+              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-2 sm:py-1.5 border-r border-b sm:border-b-0 border-[#1e1e28] transition-colors uppercase tracking-wider"
             >
               tester
             </button>
@@ -1543,13 +1543,13 @@ function MainApp({
                 showToast({ text: 'Config copied', appearance: 'success' });
               }}
               disabled={!workingConfig.trim()}
-              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors disabled:opacity-30 uppercase tracking-wider"
+              className="text-[10px] font-mono text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22] px-2.5 py-2 sm:py-1.5 border-b sm:border-r sm:border-b-0 border-[#1e1e28] transition-colors disabled:opacity-30 uppercase tracking-wider"
             >
               copy
             </button>
             <button
               onClick={() => setIsEditing((v) => !v)}
-              className={`text-[10px] font-mono px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider ${
+              className={`text-[10px] font-mono px-2.5 py-2 sm:py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider ${
                 isEditing
                   ? 'text-[#ff4500] bg-[#ff4500]/10 hover:bg-[#ff4500]/20'
                   : 'text-[#555] hover:text-[#c0c0c8] hover:bg-[#1a1a22]'
@@ -1560,14 +1560,14 @@ function MainApp({
             <button
               onClick={handleReplaceClick}
               disabled={!readiness.wikiWritable}
-              className="text-[10px] font-mono text-red-500/60 hover:text-red-400 hover:bg-[#1a1a22] px-2.5 py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider disabled:opacity-30"
+              className="text-[10px] font-mono text-red-500/60 hover:text-red-400 hover:bg-[#1a1a22] px-2.5 py-2 sm:py-1.5 border-r border-[#1e1e28] transition-colors uppercase tracking-wider disabled:opacity-30"
             >
               replace all
             </button>
             <button
               onClick={() => void handleSaveClick()}
               disabled={!hasUnsavedChanges || !readiness.wikiWritable}
-              className="text-[10px] font-mono text-[#ff4500] hover:bg-[#ff4500]/10 px-2.5 py-1.5 transition-colors disabled:opacity-30 uppercase tracking-wider"
+              className="text-[10px] font-mono text-[#ff4500] hover:bg-[#ff4500]/10 px-2.5 py-2 sm:py-1.5 transition-colors disabled:opacity-30 uppercase tracking-wider"
             >
               save to wiki
             </button>
@@ -1575,8 +1575,8 @@ function MainApp({
         </div>
 
         {lastVerifiedSave && (
-          <div className="px-4 py-2 border-b border-[#1e1e28] bg-emerald-500/5 text-[10px] font-mono text-emerald-400 flex items-center justify-between">
-            <span>verified save · {new Date(lastVerifiedSave.timestamp).toLocaleString()}</span>
+          <div className="px-3 sm:px-4 py-2 border-b border-[#1e1e28] bg-emerald-500/5 text-[10px] font-mono text-emerald-400 flex flex-wrap items-center justify-between gap-2">
+            <span className="min-w-0 truncate">verified save · {new Date(lastVerifiedSave.timestamp).toLocaleString()}</span>
             <button
               onClick={() => void undoLastSave()}
               disabled={!lastBackupAvailable}
@@ -1641,8 +1641,8 @@ function MainApp({
           )}
         </div>
 
-        <div className="px-4 py-1.5 border-t border-[#1e1e28] bg-[#0d0d12] text-[10px] font-mono text-[#2e2e3a] shrink-0 flex items-center justify-between">
-          <span>
+        <div className="px-3 sm:px-4 py-1.5 border-t border-[#1e1e28] bg-[#0d0d12] text-[10px] font-mono text-[#2e2e3a] shrink-0 flex flex-wrap items-center justify-between gap-2">
+          <span className="min-w-0 truncate">
             {isEditing
               ? 'editing directly — click "view" to return to highlighted view, then save to wiki'
               : 'AI-generated YAML — test on a low-traffic post before relying on new rules'}

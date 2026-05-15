@@ -36,7 +36,7 @@
       "quotaConflict": {
         "type": "number",
         "label": "Conflict calls/day/sub",
-        "defaultValue": 5
+        "defaultValue": 50
       },
       "maxInputTokens": {
         "type": "number",

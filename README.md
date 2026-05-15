@@ -157,7 +157,7 @@ Because the developer's shared Gemini key funds all usage, cost controls are non
 | Control | Behavior |
 |---|---|
 | **Kill switch** | Global `paused` setting — halts all Gemini calls instantly across every subreddit |
-| **Daily quotas** | Generate: 50/day/sub · Explain: 50/day/sub · Conflict Check: 5/day/sub. Quota increments only after a successful Gemini response. |
+| **Daily quotas** | Generate: 50/day/sub · Explain: 50/day/sub · Conflict Check: 50/day/sub. Quota increments only after a successful Gemini response. |
 | **Max input size** | Configs above ~50K tokens are rejected before any API call is made |
 | **Usage logging** | Token counts written to Redis per subreddit per day, retained for 48 hours during the hackathon window |
 
