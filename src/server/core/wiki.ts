@@ -15,7 +15,7 @@ function backupIndexKey(subredditName: string): string {
 }
 
 export function wikiPermissionHelp(): string {
-  return 'Manage Wiki Pages permission required. Ask a moderator with Everything or Wiki permissions to grant it.';
+  return 'Manage Settings permission required. Ask a moderator with Everything or Manage Settings permission to grant it.';
 }
 
 export async function getCurrent(subredditName: string): Promise<string> {

@@ -52,17 +52,35 @@ import { testAutomodRules } from '../core/ruleTester';
 export const api = new Hono();
 
 function normalizeModPermissionNames(modPermissions: unknown[]): string[] {
-  return modPermissions.map((permission) => String(permission));
+  return modPermissions.map((permission) => String(permission).toLowerCase());
 }
 
 function canManageSubredditKey(modPermissionNames: string[]): boolean {
   return modPermissionNames.includes('all') || modPermissionNames.includes('config') || modPermissionNames.includes('wiki');
 }
 
+function canManageAutomodConfig(modPermissionNames: string[]): boolean {
+  return modPermissionNames.includes('all') || modPermissionNames.includes('config');
+}
+
 async function getCurrentUserModPermissionNames(subredditName: string): Promise<string[]> {
   const currentUser = await reddit.getCurrentUser();
   const modPermissions = currentUser ? await currentUser.getModPermissionsForSubreddit(subredditName) : [];
   return normalizeModPermissionNames(modPermissions);
+}
+
+async function requireAutomodConfigPermission(subredditName: string): Promise<string[] | Response> {
+  const modPermissionNames = await getCurrentUserModPermissionNames(subredditName);
+  if (!canManageAutomodConfig(modPermissionNames)) {
+    return new Response(
+      JSON.stringify({
+        status: 'error',
+        message: 'Only moderators with Everything or Manage Settings permission can view or edit AutoModerator config.',
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+  return modPermissionNames;
 }
 
 api.get('/init', async (c) => {
@@ -75,18 +93,25 @@ api.get('/init', async (c) => {
   try {
     const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
     const currentUser = await reddit.getCurrentUser();
-    const [privacyRaw, currentWiki, quota, modPermissions, byoKey, conflictGate, lastBackupAvailable, debugToolsEnabled] = await Promise.all([
+    const modPermissions = currentUser ? await currentUser.getModPermissionsForSubreddit(subredditName) : [];
+    const modPermissionNames = normalizeModPermissionNames(modPermissions);
+    if (!canManageAutomodConfig(modPermissionNames)) {
+      return c.json<ErrorResponse>(
+        { status: 'error', message: 'Only moderators with Everything or Manage Settings permission can view or edit AutoModerator config.' },
+        403
+      );
+    }
+
+    const [privacyRaw, currentWiki, quota, byoKey, conflictGate, lastBackupAvailable, debugToolsEnabled] = await Promise.all([
       redis.get(`privacy:acked:${subredditName}:${username}`),
       getCurrentWithStatus(subredditName),
       getQuotaStatus(subredditName),
-      currentUser?.getModPermissionsForSubreddit(subredditName) ?? Promise.resolve([]),
       getSubredditGeminiApiKey(subredditName),
       getConflictGateStatus(),
       hasLastBackup(subredditName),
       settings.get<boolean>('debugToolsEnabled'),
     ]);
-    const modPermissionNames = normalizeModPermissionNames(modPermissions);
-    const wikiWritable = modPermissionNames.includes('wiki') || modPermissionNames.includes('all');
+    const wikiWritable = canManageAutomodConfig(modPermissionNames);
 
     return c.json<InitResponse>({
       type: 'init',
@@ -123,6 +148,13 @@ api.get('/demo-config', (c) => {
 });
 
 api.post('/test-rules', async (c) => {
+  const { subredditName } = context;
+  if (!subredditName) {
+    return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
+  }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
+
   const body = await c.req.json<RuleTestRequest>();
   try {
     const validation = validateAutomodYaml(body.config);
@@ -223,6 +255,8 @@ api.post('/generate', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
 
   const body = await c.req.json<GenerateRequest>();
   const inputEstimate = estimateTokens(body.currentConfig + body.message);
@@ -255,6 +289,8 @@ api.post('/explain', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
 
   const body = await c.req.json<ExplainRequest>();
   const inputEstimate = estimateTokens(body.config);
@@ -283,6 +319,8 @@ api.post('/conflict', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
 
   const body = await c.req.json<ConflictRequest>();
   const inputEstimate = estimateTokens(body.config);
@@ -318,6 +356,8 @@ api.post('/save', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
 
   const body = await c.req.json<SaveRequest>();
 
@@ -361,6 +401,8 @@ api.post('/undo-last-save', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
 
   try {
     const backup = await getLatestBackup(subredditName);
@@ -399,6 +441,9 @@ api.get('/revisions', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
+
   try {
     const revisions = await getRevisions(subredditName);
     return c.json<RevisionsResponse>({ type: 'revisions', revisions });
@@ -413,6 +458,9 @@ api.post('/revert', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
+
   const body = await c.req.json<RevertRequest>();
   try {
     const content = await revertTo(subredditName, body.revisionId);
@@ -428,6 +476,9 @@ api.get('/revision-content', async (c) => {
   if (!subredditName) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing subredditName' }, 400);
   }
+  const permissionResult = await requireAutomodConfigPermission(subredditName);
+  if (permissionResult instanceof Response) return permissionResult;
+
   const revisionId = c.req.query('id');
   if (!revisionId) {
     return c.json<ErrorResponse>({ status: 'error', message: 'Missing revision ID' }, 400);

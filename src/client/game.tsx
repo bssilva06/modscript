@@ -56,10 +56,11 @@ const DEFAULT_READINESS: ReadinessState = {
   message: 'Readiness not checked',
 };
 
-const WIKI_PERMISSION_HELP = 'Manage Wiki Pages permission required. Ask a moderator with Everything or Wiki permissions to grant it.';
+const WIKI_PERMISSION_HELP = 'Manage Settings permission required. Ask a moderator with Everything or Manage Settings permission to grant it.';
 
 type AppState =
   | { stage: 'loading' }
+  | { stage: 'blocked'; message: string }
   | { stage: 'privacy'; postId: string; subredditName: string; username: string; currentConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean }
   | { stage: 'template'; postId: string; subredditName: string; username: string; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean }
   | { stage: 'app'; postId: string; subredditName: string; username: string; initialConfig: string; quota: QuotaState; readiness: ReadinessState; byoKeyConfigured: boolean; conflictGate: InitResponse['conflictGate'] | undefined; lastBackupAvailable: boolean; debugToolsEnabled: boolean };
@@ -1700,7 +1701,11 @@ function App() {
     const init = async () => {
       try {
         const res = await fetch('/api/init');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const err = await res.json() as ErrorResponse;
+          setState({ stage: 'blocked', message: err.message });
+          return;
+        }
         const data = await res.json() as InitResponse;
         if (data.type !== 'init') throw new Error('Unexpected response');
 
@@ -1747,7 +1752,7 @@ function App() {
         }
       } catch (err) {
         console.error('Init failed', err);
-        setState({ stage: 'loading' });
+        setState({ stage: 'blocked', message: 'ModScript could not load. Please refresh or try again later.' });
       }
     };
     void init();
@@ -1761,6 +1766,21 @@ function App() {
           <div className="text-[10px] text-[#3a3a4a] tracking-widest uppercase">
             loading modscript<span className="animate-pulse">.</span><span className="animate-pulse [animation-delay:200ms]">.</span><span className="animate-pulse [animation-delay:400ms]">.</span>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.stage === 'blocked') {
+    return (
+      <div className="flex h-dvh items-center justify-center bg-[#0a0a0e] p-4">
+        <div className="w-full max-w-md border border-[#252535] bg-[#111118] p-5 font-mono">
+          <div className="mb-1 text-[10px] uppercase tracking-widest text-[#ff4500]">access required</div>
+          <h1 className="mb-3 text-base font-bold text-[#e0e0e8]">AutoModerator config is protected</h1>
+          <p className="text-sm leading-relaxed text-[#9090a0]">{state.message}</p>
+          <p className="mt-3 text-xs leading-relaxed text-[#666]">
+            ModScript only exposes AutoModerator management tools to moderators with the required subreddit configuration permission.
+          </p>
         </div>
       </div>
     );

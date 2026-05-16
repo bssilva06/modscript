@@ -51,7 +51,7 @@ ModScript lives inside Reddit's native mod panel as a Devvit app. Moderators ope
 | **Save safety** | YAML validation, verified save re-read, diff preview, undo, Redis backup, native wiki revision history |
 | **Judge/demo flow** | Guided walkthrough, local demo config, expanded starter templates, example prompt chips |
 | **Risk visibility** | Low/Medium/High badge, deterministic safety checklist, false-positive notes |
-| **Permissions** | Wiki readability check and save-permission readiness strip |
+| **Permissions** | AutoModerator config access is gated to moderators with Everything or Manage Settings permission |
 | **Cost controls** | Kill switch, daily quotas, BYO subreddit Gemini keys, max input size, short-lived usage logs |
 
 ### Three Core Modes
@@ -112,7 +112,8 @@ Output is framed as **review suggestions** — structural pattern analysis for a
 
 ### Wiki Read/Write with Guardrails
 - **Auto-fetches** the subreddit's `config/automoderator` wiki page on open — no copy/pasting required.
-- **Readiness check on open** — shows whether the wiki is readable and whether the current moderator has `wiki` or `all` permissions required to save. Generate, Explain, Conflict Check, copy, and demo loading still work without write permission.
+- **Permission gate on open** — blocks AutoModerator config viewing and editing unless the current user has `config` or `all` moderator permission.
+- **Readiness check on open** — shows whether the wiki is readable and whether the current moderator can save. Generate, Explain, Conflict Check, history, tester, save, undo, and revision content endpoints also enforce the same config permission server-side.
 - **YAML validation before save** — every save path validates the final YAML before showing the diff preview, and the server validates again before writing to Reddit's wiki.
 - **Validation status in the editor** — the code panel footer shows `valid yaml`, `invalid yaml`, or `not checked`.
 - **Verified saves** — after writing, the server re-reads `config/automoderator` and only returns success when the saved wiki content exactly matches the submitted content.
@@ -179,7 +180,7 @@ Conflict Check also has a disabled-by-default IAP gate stub controlled by global
 - **Saves are verified.** A save is only considered successful after the server re-reads Reddit's wiki and confirms the content matches.
 - **Undo is verified.** The latest Redis backup can be restored through the UI and is also verified by re-reading the wiki.
 - **Risk is visible before save.** The editor and diff modal show Low/Medium/High risk with concise reasons so moderators can spot broad removals, broad regexes, or full rewrites before committing.
-- **Save permission is explicit.** The app checks moderator permissions and disables wiki writes when `wiki` or `all` permission is missing.
+- **Config permission is explicit.** The app checks moderator permissions before reading or editing AutoModerator config and blocks access unless `config` or `all` permission is present.
 - **Redis backup before every write.** Fast-restore snapshot taken immediately before each wiki update.
 - **Reddit's native revision history** is the canonical record — visible in the wiki's revision log, one-click revertible from within ModScript.
 - **Safety review is deterministic.** Generated rules get a local checklist of action, trigger fields, and false-positive notes without making extra AI calls.
